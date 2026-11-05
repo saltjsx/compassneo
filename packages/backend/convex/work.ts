@@ -1,5 +1,5 @@
 import { v } from "convex/values";
-import { action, mutation, query, type ActionCtx } from "./_generated/server";
+import { action, internalQuery, mutation, query, type ActionCtx } from "./_generated/server";
 import { internal } from "./_generated/api";
 import type { Doc, Id } from "./_generated/dataModel";
 import { getTasks, submissionPath, assetPath, submitTask, uploadFile, type CompassTask, type CompassSession } from "@compassneo/compass";
@@ -21,12 +21,19 @@ import { classTarget } from "./lib/target";
 import { hashToken } from "./lib/crypto";
 import { accountFor } from "./timetable";
 import { readRow, sideOf, type Side } from "./cache";
+import { lastLessons, type LastLesson } from "./lib/lessons";
+import type { CanvasAssignment } from "@compassneo/canvas";
+import { canvasState, fetchCourseWork, textKind as canvasTextKind, workKind as canvasWorkKind } from "./canvas";
+import { withCanvas } from "./lib/canvas";
+import { canvasView, currentClasses } from "./lib/courses";
 
 /**
- * Work to do for a class, from both sides, and handing it in: Compass's learning tasks (instructions, attachments, the
- * slots work is handed in on, what the student has handed in) and Connect's submissions (the same, from the class's
- * submission board). Compass's come with every sync (the tasks step); Connect's are fetched when the class panel asks
- * (load), with the student's own entry on each.
+ * Work to do for a class, from every side, and handing it in: Compass's learning tasks (instructions, attachments, the
+ * slots work is handed in on, what the student has handed in), Connect's submissions (the same, from the class's
+ * submission board) and Canvas's assignments (from the class's course, and any assignment in an unclaimed course that
+ * names the class: lib/courses.ts). Compass's come with every sync (the tasks step); Connect's are fetched when the
+ * class panel asks (load), with the student's own entry on each; Canvas's with every full sync and by load. Canvas's
+ * are read-only here: they open on Canvas to be handed in.
  *
  * Handing in writes to Compass or Connect exactly as their own upload windows do. The file goes to Convex storage
  * first (uploadUrl), so the action can pass it on, and is deleted from storage once handed in.
@@ -46,8 +53,9 @@ export type WorkState = "todo" | "overdue" | "submitted" | "late" | "closed" | "
 
 export type WorkItem = {
   key: string;
-  source: "compass" | "connect";
-  id: number;
+  source: "compass" | "connect" | "canvas";
+  /** The source's own id (Canvas's are strings: its global ids pass 2^53). */
+  id: number | string;
   name: string;
   due: string | null;
   setAt: string | null;
@@ -67,12 +75,18 @@ export type WorkItem = {
   result: string | null;
   /** Connect: the teacher has left feedback or a comment. */
   feedback: boolean;
+  /** The class's last lesson before it is due, from the kept timetable (lib/lessons.ts); null when that is not known. */
+  lastLesson: LastLesson | null;
+  /** Where it opens on its own site, when it is handed in there (Canvas). */
+  url: string | null;
 };
 
 export type ClassWork = {
   compass: Side<WorkItem[]>;
   connect: Side<WorkItem[]>;
+  canvas: Side<WorkItem[]>;
   connectClass: { name: string; code: string | null } | null;
+  canvasCourse: { name: string; url: string } | null;
 };
 
 // ---------- keeping Compass's tasks (the sync's tasks step, and load) ----------
@@ -178,6 +192,8 @@ async function compassItem(accountId: Id<"accounts">, t: CompassTask, now: numbe
           : "Compass does not take work for this task from students.",
     result: me?.result ?? null,
     feedback: false,
+    lastLesson: null,
+    url: null,
   };
 }
 
@@ -208,10 +224,47 @@ async function connectItem(accountId: Id<"accounts">, s: ConnectSubmission, mine
     why: canSubmit ? null : !s.open ? "This submission is closed." : submitted ? "Your teacher has not allowed handing this in again." : "Connect does not take work for this from you.",
     result: null,
     feedback: !!mine?.feedback?.hasComment,
+    lastLesson: null,
+    url: null,
   };
 }
 
 export const connectKind = (classId: number) => `submissions:${classId}`;
+
+/** A score as the student sees it: "17/20", or Canvas's own grade ("B+", "Complete") when it is not points. */
+function resultOf(a: CanvasAssignment) {
+  const s = a.submission;
+  if (!s || s.excused) return null;
+  if (s.score != null && a.points) return `${Math.round(s.score * 100) / 100}/${a.points}`;
+  return s.grade ?? null;
+}
+
+/** A Canvas assignment as a piece of work: read-only, opening on Canvas to be handed in. */
+export function canvasItem(a: CanvasAssignment, now: number): WorkItem {
+  const state = canvasState(a, now);
+  const s = a.submission;
+  return {
+    key: `canvas:${a.id}`,
+    source: "canvas",
+    id: a.id,
+    name: a.name,
+    due: a.due,
+    setAt: a.unlockAt,
+    important: false,
+    instructions: a.description ? parsePlan(a.description) : [],
+    attachments: [],
+    state,
+    stateText: s?.excused ? "Excused" : s?.missing && state === "overdue" ? "Canvas marks it missing" : s?.state === "pending_review" ? "Waiting for review" : null,
+    handedIn: s?.submittedAt ? [{ name: "Handed in on Canvas", href: a.url, external: true, at: s.submittedAt }] : [],
+    slots: [],
+    canSubmit: false,
+    why: state === "none" ? "This is not handed in on Canvas." : "Canvas work is handed in on Canvas.",
+    result: resultOf(a),
+    feedback: false,
+    lastLesson: null,
+    url: a.url,
+  };
+}
 
 /** A class's work from both sides, as last fetched. Reactive. */
 export const forClass = query({
@@ -241,7 +294,51 @@ export const forClass = query({
         connect = { ...side, data: items };
       } else connect = side;
     }
-    return { compass, connect, connectClass: t.connect && { name: t.connect.name, code: t.connect.code } };
+    // Each piece still to hand in learns the class's last lesson before it is due.
+    const open = [compass, connect].flatMap(side => (side.status === "ready" ? side.data : [])).filter(w => w.state === "todo" || w.state === "none");
+    const last = await lastLessons(ctx, account, open.map(w => ({ key: w.key, code, due: w.due })), now);
+    for (const w of open) w.lastLesson = last.get(w.key) ?? null;
+
+    // Canvas: the class's course, and assignments elsewhere that name the class.
+    let canvas: Side<WorkItem[]> = { status: "none" };
+    let canvasCourse: ClassWork["canvasCourse"] = null;
+    const view = await canvasView(ctx, account, await currentClasses(ctx, account));
+    if (view) {
+      const course = view.courses.find(c => view.codeOf.get(c.id) === code) ?? null;
+      canvasCourse = course && { name: course.name, url: course.url };
+      const rows = [...view.work.entries()].filter(([id]) => id === course?.id || !view.codeOf.has(id));
+      const mine = rows.flatMap(([id, r]) => (r.data?.assignments ?? []).filter(a => view.classOf(a) === code).map(a => ({ id, a })));
+      // The descriptions, from the text rows of just the courses this class's work is in.
+      const texts = new Map<string, Record<string, string>>();
+      for (const id of new Set(mine.map(m => m.id))) {
+        texts.set(id, ((await readRow(ctx, account._id, "canvas", canvasTextKind(id)))?.data ?? {}) as Record<string, string>);
+      }
+      const items = mine.map(({ id, a }) => canvasItem({ ...a, description: a.description ?? texts.get(id)?.[a.id] ?? null }, now));
+      const own = course ? view.work.get(course.id) : undefined;
+      // Canvas no longer taking the token: nothing will fetch it until a new one is added, so say why.
+      if (course && !own && account.canvasRefused) canvas = { status: "unavailable", reason: account.canvasRefused };
+      else if (course && !own) canvas = { status: "missing" };
+      else if (own?.error && !own.data) canvas = { status: "unavailable", reason: own.error };
+      else if (items.length || course)
+        canvas = { status: "ready", fetchedAt: own?.fetchedAt ?? now, error: own?.data ? own.error : null, data: items };
+    }
+    if (canvas.status === "ready") {
+      const more = await lastLessons(
+        ctx,
+        account,
+        canvas.data.filter(w => w.state === "todo" || w.state === "none").map(w => ({ key: w.key, code, due: w.due })),
+        now,
+      );
+      for (const w of canvas.data) if (more.has(w.key)) w.lastLesson = more.get(w.key) ?? null;
+    }
+
+    return {
+      compass,
+      connect,
+      canvas,
+      connectClass: t.connect && { name: t.connect.name, code: t.connect.code },
+      canvasCourse,
+    };
   },
 });
 
@@ -323,15 +420,33 @@ export const load = action({
     const t = await ctx.runQuery(internal.resources.target, { accountId: account._id, code });
     if (!t) return { ok: false, code: "signed-out", message: "This device is signed out." };
     const now = Date.now();
-    const age = async (store: "compass" | "connect", kind: string) => {
+    const age = async (store: "compass" | "connect" | "canvas", kind: string) => {
       const row = await ctx.runQuery(internal.cache.get, { accountId: account._id, store, kind });
       return row ? now - row.checkedAt : Infinity;
     };
     const jobs: Array<Promise<unknown>> = [];
-    if (force || (await age("compass", "taskdetail")) > FRESH) jobs.push(withCompass(ctx, account, s => syncTasks(ctx, account, s)));
-    if (t.connect && (force || (await age("connect", connectKind(t.connect.classId))) > FRESH)) jobs.push(fetchConnect(ctx, account, t.connect.classId));
+    // Each side on its own: one that throws (the network failing) never stops the others, or goes unhandled while the
+    // next side is looked at.
+    const quiet = (p: Promise<unknown>) => p.catch(() => {});
+    if (force || (await age("compass", "taskdetail")) > FRESH) jobs.push(quiet(withCompass(ctx, account, s => syncTasks(ctx, account, s))));
+    if (t.connect && (force || (await age("connect", connectKind(t.connect.classId))) > FRESH)) jobs.push(quiet(fetchConnect(ctx, account, t.connect.classId)));
+    const courseId = await ctx.runQuery(internal.work.canvasCourseOf, { accountId: account._id, code });
+    if (courseId && (force || (await age("canvas", canvasWorkKind(courseId))) > FRESH)) {
+      jobs.push(quiet(withCanvas(ctx, account, s => fetchCourseWork(ctx, account, s, courseId))));
+    }
     await Promise.all(jobs);
     return { ok: true };
+  },
+});
+
+/** The Canvas course a class is, by id, when the account has Canvas and a course matches. */
+export const canvasCourseOf = internalQuery({
+  args: { accountId: v.id("accounts"), code: v.string() },
+  handler: async (ctx, { accountId, code }): Promise<string | null> => {
+    const account = await ctx.db.get(accountId);
+    if (!account?.sealedCanvas || account.canvasRefused) return null;
+    const view = await canvasView(ctx, account, await currentClasses(ctx, account));
+    return view?.courses.find(c => view.codeOf.get(c.id) === code)?.id ?? null;
   },
 });
 

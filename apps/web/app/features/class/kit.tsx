@@ -35,11 +35,11 @@ import { fetchFile, openItem, saveBlob } from "@/lib/neo/viewer";
  * Small pieces the Work, Files and People sections share: what kind of file a thing is (a glyph and a colour per kind,
  * so a Word file and a PDF tell apart at a glance), a site's own icon for a link, a file's row, a section that folds, a
  * row that scrolls sideways with soft edges, and the line that says one side is still loading or could not be reached.
- * Where a thing came from (Compass or Connect) is the source's own logo: components/brand/source-mark.tsx.
+ * Where a thing came from (Compass, Connect or Canvas) is the source's own logo: components/brand/source-mark.tsx.
  */
 
-export type Source = "compass" | "connect";
-export const SOURCE: Record<Source, string> = { compass: "Compass", connect: "Connect" };
+export type Source = "compass" | "connect" | "canvas";
+export const SOURCE: Record<Source, string> = { compass: "Compass", connect: "Connect", canvas: "Canvas" };
 
 // ---------- kinds of file ----------
 

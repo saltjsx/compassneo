@@ -5,7 +5,7 @@ import { ChevronDown, Icon, LearningTask, Success } from "@/components/glaze/ico
 import { SourceMark } from "@/components/brand/source-mark";
 import { cn } from "@/lib/glaze/utils";
 import { persisted } from "@/lib/neo/store";
-import { dayIn, dayName, daysApart } from "@/lib/neo/days";
+import { dayIn, dayName, daysApart, lastLessonText } from "@/lib/neo/days";
 import { subjectIcon } from "@/lib/neo/subjects";
 import { useTodo, type TodoItem } from "@/lib/neo/overview";
 import { time } from "@/features/student/format";
@@ -154,7 +154,14 @@ function TodoRow({
   onOpenClass: (code: string, el: HTMLElement, tab?: ClassTab) => void;
 }) {
   const due = dueOf(item, zone, today);
-  const notes = [item.className, item.important && "Important", item.offline && "Not handed in online"].filter(Boolean).join(" · ");
+  const notes = [
+    item.className,
+    item.important && "Important",
+    item.offline && "Not handed in online",
+    !item.overdue && lastLessonText(item.lastLesson, today, zone),
+  ]
+    .filter(Boolean)
+    .join(" · ");
   const body = (
     <>
       <Icon icon={subjectIcon(item.className, item.className, item.code ?? "")} size={16} className={item.hue != null ? "neo-glyph" : "text-text-3"} />

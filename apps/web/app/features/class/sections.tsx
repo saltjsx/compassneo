@@ -1,3 +1,4 @@
+import { SourceMark } from "@/components/brand/source-mark";
 import { useState } from "react";
 import { AnimatePresence, motion } from "motion/react";
 import { Button } from "@/components/glaze/ui/button";
@@ -321,7 +322,7 @@ export function AssessmentRows({ tasks, semester, now }: { tasks: SemesterGrade[
   });
 }
 
-/** Why there is no grade to show yet, or nothing when there is one (or the school has no Connect). */
+/** Why there is no grade to show yet, or nothing when there is one (or there are no grades: no Connect, no Canvas). */
 export function GradeWaiting({ grades }: { grades: ClassGrades }) {
   if (grades.status !== "loading" && grades.status !== "unavailable") return null;
   return (
@@ -329,7 +330,7 @@ export function GradeWaiting({ grades }: { grades: ClassGrades }) {
       {grades.status === "loading" ? (
         <p role="status" className="flex items-center gap-2 type-body-sm text-text-2">
           <Icon icon={Pending} size={16} className="animate-spin text-neo-text motion-reduce:animate-none" />
-          Getting grades from Connect
+          Getting your grades
         </p>
       ) : (
         <p className="type-body-sm text-text-2">{grades.reason}</p>
@@ -408,6 +409,8 @@ export function NoticesBlock({ notices, zone, today }: { notices: ClassDetail["n
   const [all, setAll] = useState(false);
   if (!notices.length) return null;
   const shown = all ? notices : notices.slice(0, SHOWN_NOTICES);
+  // Canvas's say where they are from (and Connect's too, beside them).
+  const mixed = notices.some(n => n.source === "canvas");
   return (
     <Block icon={Notice} title="Notices">
       {shown.map(n => (
@@ -418,6 +421,7 @@ export function NoticesBlock({ notices, zone, today }: { notices: ClassDetail["n
             <div className="flex items-baseline gap-3">
               <span className="min-w-0 flex-1 type-label text-text-1">{n.title}</span>
               {n.at && <span className="shrink-0 type-label-sm text-text-2">{dayName(dayIn(zone, n.at), today)}</span>}
+              {mixed && <SourceMark source={n.source} size={13} className="self-center" />}
             </div>
           }
         />

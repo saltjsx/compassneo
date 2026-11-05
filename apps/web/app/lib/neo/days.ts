@@ -72,3 +72,27 @@ export function minutes(ms: number) {
   const h = Math.floor(m / 60);
   return m % 60 ? `${h} hr ${m % 60} min` : `${h} hr`;
 }
+
+/** The class's last lesson before a piece of work is due, as the server works it out (convex/lib/lessons.ts). */
+export type LastLesson = { kind: "lesson"; day: string; start: string; period: number | null } | { kind: "none" };
+
+/**
+ * "Last lesson Thursday, P3", "Last lesson today, 1:20", "No lessons left before it's due". Short, for a row's caption;
+ * null when the server does not know (the timetable is not kept that far ahead).
+ */
+export function lastLessonText(l: LastLesson | null | undefined, today: string, zone: string) {
+  if (!l) return null;
+  if (l.kind === "none") return "No lessons left before it's due";
+  const n = daysApart(today, l.day);
+  const day = n === 0 || n === 1 ? dayName(l.day, today).toLowerCase() : dayName(l.day, today);
+  return `Last lesson ${day}, ${l.period != null ? `P${l.period}` : clock(l.start, zone)}`;
+}
+
+/** "Thursday 5 November, period 3 (9:50)": the same, in full, for the work's own page. */
+export function lastLessonLong(l: LastLesson | null | undefined, today: string, zone: string) {
+  if (!l) return null;
+  if (l.kind === "none") return "No lessons of this class left before it's due";
+  const n = daysApart(today, l.day);
+  const day = n === 0 ? "Today" : n === 1 ? "Tomorrow" : longDay(l.day);
+  return `Last lesson before it's due: ${day}, ${l.period != null ? `period ${l.period} (${clock(l.start, zone)})` : clock(l.start, zone)}`;
+}

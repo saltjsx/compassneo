@@ -6,7 +6,8 @@ import { GradeRings } from "./grade-rings";
  * Grades on home, above the to-do list: one row, always there and never folded, of the main subjects' grades (Maths,
  * English, Science, HASS, in that order; lib/neo/subjects.ts), each as its own ring (grade-rings.tsx), centred, and a
  * last ring saying how many more there are. Only those four ever show here; every subject is on the Grades page. Pressing it opens Grades in the side panel (features/student/grades.tsx), where every
- * grade is gone through and every subject has a page of its own. A school without Connect has no row.
+ * grade is gone through and every subject has a page of its own. A school without Connect has no row, unless the
+ * student has added Canvas (its grades come in the same shape: convex/lib/grades.ts).
  */
 export function GradesRow({ token, day, open, onOpen }: { token: string; day: string; open: boolean; onOpen: () => void }) {
   const data = useOverviewGrades(token, day);
@@ -19,7 +20,12 @@ export function GradesRow({ token, day, open, onOpen }: { token: string; day: st
     .sort((a, b) => a.at - b.at)
     .map(x => x.s);
   const more = ready ? ready.subjects.length - shown.length : 0;
-  const note = data?.status === "loading" ? "Getting your grades from Connect" : data?.status === "unavailable" ? data.reason : null;
+  const note =
+    data?.status === "loading"
+      ? `Getting your grades from ${data.source === "canvas" ? "Canvas" : "Connect"}`
+      : data?.status === "unavailable"
+        ? data.reason
+        : null;
 
   return (
     <section aria-label="Grades" aria-busy={!data || undefined} className="mt-6">

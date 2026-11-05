@@ -3,13 +3,16 @@ import { internalMutation, internalQuery, type QueryCtx } from "./_generated/ser
 import type { Id } from "./_generated/dataModel";
 
 /**
- * Rows of what Compass and Connect last said, by kind ("resources:25860", "attendance", ...), for the modules added
- * after the sync's own steps: resources, work, learners, attendance, events, chronicle. A row keeps its data and when
- * it was fetched; on the Connect side an error is kept beside the last good data (as connect.store does for grades).
+ * Rows of what Compass, Connect and Canvas last said, by kind ("resources:25860", "attendance", ...), for the modules
+ * added after the sync's own steps: resources, work, learners, attendance, events, chronicle, and everything from
+ * Canvas. A row keeps its data and when it was fetched; on the Connect and Canvas sides an error is kept beside the last
+ * good data (as connect.store does for grades).
  */
 
-const storeV = v.union(v.literal("compass"), v.literal("connect"));
-export type Store = "compass" | "connect";
+const storeV = v.union(v.literal("compass"), v.literal("connect"), v.literal("canvas"));
+export type Store = "compass" | "connect" | "canvas";
+/** The table each side with an error field keeps its rows in. */
+const TABLE = { connect: "connectCache", canvas: "canvasCache" } as const;
 
 export type Row = { data: unknown; fetchedAt: number | null; error: string | null; checkedAt: number };
 
@@ -22,7 +25,7 @@ export async function readRow(ctx: QueryCtx, accountId: Id<"accounts">, store: S
     if (!r) return e ? { data: null, fetchedAt: null, error, checkedAt: e.fetchedAt } : null;
     return { data: r.data, fetchedAt: r.fetchedAt, error, checkedAt: Math.max(r.fetchedAt, e?.fetchedAt ?? 0) };
   }
-  const r = await ctx.db.query("connectCache").withIndex("by_account_kind", i => i.eq("accountId", accountId).eq("kind", kind)).unique();
+  const r = await ctx.db.query(TABLE[store]).withIndex("by_account_kind", i => i.eq("accountId", accountId).eq("kind", kind)).unique();
   return r && { data: r.data ?? null, fetchedAt: r.fetchedAt ?? null, error: r.error ?? null, checkedAt: r.checkedAt };
 }
 
@@ -52,16 +55,16 @@ export const put = internalMutation({
       else await ctx.db.patch(row._id, JSON.stringify(row.data) === JSON.stringify(data) ? { fetchedAt: now } : { data, fetchedAt: now });
       return;
     }
-    const row = await ctx.db.query("connectCache").withIndex("by_account_kind", i => i.eq("accountId", accountId).eq("kind", kind)).unique();
+    const row = await ctx.db.query(TABLE[store]).withIndex("by_account_kind", i => i.eq("accountId", accountId).eq("kind", kind)).unique();
     const next = data !== undefined ? { data, error: undefined, fetchedAt: now, checkedAt: now } : { error, checkedAt: now };
     if (row) await ctx.db.patch(row._id, next);
-    else await ctx.db.insert("connectCache", { accountId, kind, ...next });
+    else await ctx.db.insert(TABLE[store], { accountId, kind, ...next });
   },
 });
 
 /** What a query hands the app for one side (Compass or Connect) of something fetched on demand. */
 export type Side<T> =
-  /** This side has nothing for it (no Connect at the school, or the class is not on Connect). */
+  /** This side has nothing for it (no Connect at the school, no Canvas added, or the class is not on either). */
   | { status: "none" }
   /** Not fetched yet: the app's load call is on its way. */
   | { status: "missing" }

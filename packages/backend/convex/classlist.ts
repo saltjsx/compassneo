@@ -2,8 +2,9 @@ import { v } from "convex/values";
 import { query } from "./_generated/server";
 import type { ConnectNotice, SubjectGrade } from "@compassneo/connect";
 import { addDays, isDay, schoolToday } from "./lib/days";
-import { huesFor, matchSubject, shortName, subjectName, type Person } from "./lib/match";
+import { huesFor, shortName, subjectName, type Person } from "./lib/match";
 import { accountFor, compassRow, connectRow, gradeFrom, peopleFor, semesterOf, type Grade, type StoredClass, type StoredLesson } from "./timetable";
+import { gradeRows, subjectMatcher } from "./lib/grades";
 
 /**
  * Every class the student takes, for the list on home: each with its colour, teacher, this semester's grade and its
@@ -42,7 +43,9 @@ export const all = query({
     const classes = (((await compassRow(ctx, account._id, "classes"))?.data ?? []) as StoredClass[]).filter(
       c => c.lastSeen >= addDays(today, -STALE_DAYS),
     );
-    const grades = ((await connectRow(ctx, account._id, "grades"))?.data ?? []) as SubjectGrade[];
+    const { source, grades: gradesRow } = await gradeRows(ctx, account);
+    const grades = (gradesRow?.data ?? []) as SubjectGrade[];
+    const subjectOfClass = await subjectMatcher(ctx, account, source);
     const notices = ((await connectRow(ctx, account._id, "notices"))?.data ?? []) as ConnectNotice[];
 
     // The kept days from today on: each class's next lessons, and the rooms it is in.
@@ -67,7 +70,7 @@ export const all = query({
           const room = l.coverRoom ?? l.room;
           if (room) rooms.set(room, (rooms.get(room) ?? 0) + 1);
         }
-        const g = matchSubject({ code: c.code, subject: c.subject, teachers: c.teachers }, pool);
+        const g = subjectOfClass({ code: c.code, subject: c.subject, teachers: c.teachers }, pool);
         const next = mine[0]?.l;
         return {
           code: c.code,

@@ -141,3 +141,104 @@ export function matchSubject<S extends SubjectInfo>(klass: ClassInfo, subjects: 
   }
   return bestScore >= 0.5 ? best : null;
 }
+
+// ---------- Canvas courses ----------
+
+/** "Mrs Jane Marlow" is Jane Marlow: a title would read as a first initial. */
+const untitled = (name: string) => name.replace(/^\s*(mr|mrs|ms|miss|mx|dr|prof|sir)\.?\s+/i, "").trim();
+
+/** A class's code without its year and class number: "9DT" is dt, "8SCI2" is sci, "12MAA-2" is maa. */
+const codeCore = (code: string) => code.toLowerCase().replace(/^\d+/, "").replace(/[^a-z]+\d*$/, "").replace(/\d+$/, "").replace(/[^a-z]/g, "");
+
+export type CourseInfo = { name: string; code: string | null; teachers: string[] };
+
+/**
+ * Word overlap between two names, each shared word counting by how rare it is among all the names it could have
+ * matched (df: in how many it appears), out of the shorter name's words. "Digital Technology" and "Food
+ * Technology" share only a word every technology course has, so they do not match; "Mathematics" and "9 Mathematics
+ * Core" do.
+ */
+function overlap(a: Set<string>, b: Set<string>, df: Map<string, number>) {
+  if (!a.size || !b.size) return 0;
+  let score = 0;
+  for (const w of a) if (b.has(w)) score += 1 / (df.get(w) ?? 1);
+  return score / Math.min(a.size, b.size);
+}
+
+const docFreq = (names: Array<Set<string>>) => {
+  const df = new Map<string, number>();
+  for (const n of names) for (const w of n) df.set(w, (df.get(w) ?? 0) + 1);
+  return df;
+};
+
+/**
+ * Which Canvas course each timetable class is, by class code. A course whose code is the class's (or the class's
+ * without its class number: "8SCI" for "8SCI2") is it; else the course sharing its teachers and the rarer words of
+ * its name, as for Connect's subjects (matchSubject). Each course goes to one class at most, the best match first.
+ * Homeroom is never a course.
+ */
+export function matchCourses<C extends CourseInfo>(classes: ClassInfo[], courses: C[]): Map<string, C> {
+  const courseWords = courses.map(c => subjectWords(subjectName(c.name, c.name)));
+  const df = docFreq(courseWords);
+  const pairs: Array<{ code: string; c: C; score: number }> = [];
+  for (const k of classes) {
+    if (shortName(k.subject, k.code) === "Homeroom") continue;
+    const mine = new Set(k.teachers.map(t => t.toLowerCase().replace(/\d+$/, "")));
+    const name = subjectWords(subjectName(k.subject, k.code));
+    courses.forEach((c, i) => {
+      const cc = c.code ? c.code.toLowerCase().replace(/[^a-z0-9]/g, "") : "";
+      const kc = k.code.toLowerCase().replace(/[^a-z0-9]/g, "");
+      const byCode = !!cc && (cc === kc || (cc.length >= 4 && kc.startsWith(cc)));
+      const teachers = c.teachers.map(untitled);
+      const shared = teachers.filter(t => codesFor(t).some(x => mine.has(x.code))).length;
+      const words = overlap(name, courseWords[i]!, df);
+      const score = (byCode ? 3 : 0) + (shared ? 1 : 0) + words;
+      // A name match alone has to be a real one; a shared teacher alone is not enough (one teacher, many classes).
+      if (byCode || words >= 0.5) pairs.push({ code: k.code, c, score });
+    });
+  }
+  pairs.sort((a, b) => b.score - a.score);
+  const out = new Map<string, C>();
+  const taken = new Set<C>();
+  for (const p of pairs) {
+    if (out.has(p.code) || taken.has(p.c)) continue;
+    out.set(p.code, p.c);
+    taken.add(p.c);
+  }
+  return out;
+}
+
+/**
+ * The class a piece of work in a course no class claims is for, by its name: some schools keep formal assessments in
+ * a course of their own ("Year 9 Assessments"), named for the subject ("Digital Technology Task 2", "Science
+ * half-yearly exam") or its code ("DT Task 2"). A class may come more than once, under other names for it (its Canvas
+ * course's name). Null when no class's name or code is in it, or two classes are equally.
+ */
+export function classForName(name: string, classes: ClassInfo[]): string | null {
+  const said = subjectWords(name);
+  const raw = new Set(words(name).map(w => w.toLowerCase()));
+  const candidates = classes.filter(k => shortName(k.subject, k.code) !== "Homeroom");
+  const names = candidates.map(k => subjectWords(subjectName(k.subject, k.code)));
+  // How rare a word is, counted over classes: one class under two names counts once.
+  const perClass = new Map<string, Set<string>>();
+  candidates.forEach((k, i) => perClass.set(k.code, new Set([...(perClass.get(k.code) ?? []), ...names[i]!])));
+  const df = docFreq([...perClass.values()]);
+  let best: string | null = null;
+  let bestScore = 0;
+  let tie = false;
+  candidates.forEach((k, i) => {
+    const mine = names[i]!;
+    let common = 0;
+    for (const w of mine) if (said.has(w)) common += 1 / (df.get(w) ?? 1);
+    let score = mine.size ? common / mine.size : 0;
+    const core = codeCore(k.code);
+    const short = shortName(k.subject, k.code).toLowerCase();
+    if ((core.length >= 2 && raw.has(core)) || (short.length >= 3 && !short.includes(" ") && raw.has(short))) score = Math.max(score, 1);
+    if (score > bestScore) {
+      best = k.code;
+      bestScore = score;
+      tie = false;
+    } else if (score === bestScore && score > 0 && best !== k.code) tie = true;
+  });
+  return bestScore >= 0.75 && !tie ? best : null;
+}

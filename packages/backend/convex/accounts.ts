@@ -11,6 +11,7 @@ import { hashToken } from "./lib/crypto";
  *                  Connect ends the session. Compass does that every day.
  *   sealedCompass  Compass's session cookies (SESSION_KEY)
  *   sealedConnect  Connect's session cookies (SESSION_KEY), WA schools only
+ *   sealedCanvas   the student's Canvas access token (CREDENTIALS_KEY), when they have added Canvas
  * Each is bound to the account's key, so it opens only on its own row.
  *
  * Sessions are devices: a token hash pointing at an account. When the last device signs out, the account and its
@@ -138,6 +139,9 @@ export async function forgetAccount(ctx: MutationCtx, account: Doc<"accounts">, 
     await ctx.db.delete(c._id);
   }
   for (const c of await ctx.db.query("compassCache").withIndex("by_account_kind", i => i.eq("accountId", account._id)).collect()) {
+    await ctx.db.delete(c._id);
+  }
+  for (const c of await ctx.db.query("canvasCache").withIndex("by_account_kind", i => i.eq("accountId", account._id)).collect()) {
     await ctx.db.delete(c._id);
   }
   for (const r of await ctx.db.query("syncs").withIndex("by_account", i => i.eq("accountId", account._id)).collect()) {

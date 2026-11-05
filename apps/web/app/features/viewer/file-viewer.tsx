@@ -263,7 +263,7 @@ function Header({
   closeRef,
 }: {
   title: string;
-  source?: "compass" | "connect";
+  source?: "compass" | "connect" | "canvas";
   action: React.ReactNode;
   closeRef: React.RefObject<HTMLButtonElement | null>;
 }) {

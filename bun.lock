@@ -48,6 +48,7 @@
       "name": "@compassneo/backend",
       "dependencies": {
         "@anthropic-ai/sdk": "^1.5.0",
+        "@compassneo/canvas": "workspace:*",
         "@compassneo/compass": "workspace:*",
         "@compassneo/connect": "workspace:*",
         "@convex-dev/workpool": "^0.4.15",
@@ -62,6 +63,12 @@
     },
     "packages/brand": {
       "name": "@compassneo/brand",
+    },
+    "packages/canvas": {
+      "name": "@compassneo/canvas",
+      "devDependencies": {
+        "typescript": "^7.0.2",
+      },
     },
     "packages/compass": {
       "name": "@compassneo/compass",
@@ -122,6 +129,8 @@
     "@compassneo/backend": ["@compassneo/backend@workspace:packages/backend"],
 
     "@compassneo/brand": ["@compassneo/brand@workspace:packages/brand"],
+
+    "@compassneo/canvas": ["@compassneo/canvas@workspace:packages/canvas"],
 
     "@compassneo/compass": ["@compassneo/compass@workspace:packages/compass"],
 

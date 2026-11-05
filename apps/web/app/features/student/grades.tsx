@@ -89,7 +89,7 @@ function Overview({ data, zone, today, now, onPick }: { data: ReadyGrades; zone:
       )}
 
       {data.subjects.length > 0 && (
-        <Section icon={AssessmentsGlyph} title={`Subjects · Semester ${data.semester}`} source="connect">
+        <Section icon={AssessmentsGlyph} title={`Subjects · Semester ${data.semester}`} source={data.source}>
           {data.subjects.map(s => (
             <SubjectRow key={s.key} s={s} now={now} onPick={onPick} />
           ))}
@@ -100,7 +100,7 @@ function Overview({ data, zone, today, now, onPick }: { data: ReadyGrades; zone:
       {data.upcoming.length > 0 && <Upcoming items={data.upcoming} zone={zone} today={today} onPick={onPick} />}
 
       {data.other.length > 0 && (
-        <Section icon={AssessmentsGlyph} title={`Semester ${data.other[0]!.semester}`} source="connect">
+        <Section icon={AssessmentsGlyph} title={`Semester ${data.other[0]!.semester}`} source={data.source}>
           {data.other.map(s => (
             <SubjectRow key={s.key} s={s} now={now} onPick={onPick} />
           ))}

@@ -4,12 +4,14 @@ import { internal } from "./_generated/api";
 import { connectFile } from "@compassneo/connect";
 import { withCompass } from "./lib/compass";
 import { withConnect } from "./lib/connect";
+import { withCanvas } from "./lib/canvas";
 import { readLink } from "./lib/links";
+import { readCalendarLink } from "./calendar";
 import { median } from "@mediansh/agent-tools";
 import { medianConfig } from "./lib/median";
 
 /**
- * GET /file/<link>/<name>: a file from Compass or Connect, fetched with the account's session (lib/links.ts says which
+ * GET /file/<link>/<name>: a file from Compass, Connect or Canvas, fetched with the account's session or token (lib/links.ts says which
  * file and account; its MAC says the link was made here). ?dl=1 saves it instead of opening it in the tab.
  */
 
@@ -35,11 +37,16 @@ const fileRoute = httpAction(async (ctx, req) => {
   const got =
     link.source === "compass"
       ? await withCompass(ctx, account, s => s.file(link.path))
-      : await withConnect(ctx, account, c => connectFile(c, link.path));
+      : link.source === "canvas"
+        ? await withCanvas(ctx, account, s => s.file(link.path.split("/").pop()!, MAX_BYTES))
+        : await withConnect(ctx, account, c => connectFile(c, link.path));
   if (!got.ok) return text(502, got.message);
   const file = got.value;
-  if (!file) return text(404, "Compass did not find that file. It may have been moved or deleted.");
-  if (file.bytes.byteLength > MAX_BYTES) return text(413, "This file is too big for Compass Neo to pass on. Open it in Compass instead.");
+  const where = link.source === "canvas" ? "Canvas" : link.source === "connect" ? "Connect" : "Compass";
+  if (!file) return text(404, `${where} did not find that file. It may have been moved or deleted.`);
+  if (file.bytes.byteLength > MAX_BYTES || ("size" in file && typeof file.size === "number" && file.size > MAX_BYTES)) {
+    return text(413, `This file is too big for Compass Neo to pass on. Open it in ${where} instead.`);
+  }
 
   const name = (file.name ?? (rawName ? decodeURIComponent(rawName) : "file")).replace(/["\r\n]/g, "");
   const type = !file.type || /octet-stream/i.test(file.type) ? guessType(name) : file.type;
@@ -80,6 +87,31 @@ const TYPES: Record<string, string> = {
 const guessType = (name: string) => TYPES[/\.([a-z0-9]+)$/i.exec(name)?.[1]?.toLowerCase() ?? ""] ?? "application/octet-stream";
 
 /**
+ * GET /calendar/<link>/compass-neo.ics: the calendar feed (calendar.ts), for a calendar app to subscribe to. The link is
+ * the only key; one that is not the account's current link (a new one was made, or the feed turned off) is gone.
+ */
+const calendarRoute = httpAction(async (ctx, req) => {
+  const [, , token] = new URL(req.url).pathname.split("/");
+  const link = token ? await readCalendarLink(token) : null;
+  const body = link ? await ctx.runQuery(internal.calendar.feed, { accountId: link.a, nonce: link.n }) : null;
+  if (body == null) {
+    return new Response("This calendar link no longer works. Get a new one from Compass Neo.", {
+      status: 410,
+      headers: { "Content-Type": "text/plain; charset=utf-8", "Cache-Control": "no-store" },
+    });
+  }
+  return new Response(body, {
+    status: 200,
+    headers: {
+      "Content-Type": "text/calendar; charset=utf-8",
+      "Content-Disposition": 'inline; filename="compass-neo.ics"',
+      "Cache-Control": "private, max-age=900",
+      "X-Content-Type-Options": "nosniff",
+    },
+  });
+});
+
+/**
  * /api/median: Median's tools (lib/median.ts). An unsigned GET connects this URL to Median and syncs the manifest (do one
  * after each deploy); signed GETs and POSTs come from Median itself. The request reaches the handler with its body
  * untouched, as the signature needs.
@@ -91,6 +123,7 @@ const medianRoute = httpAction(async (ctx, req) => {
 
 const http = httpRouter();
 http.route({ pathPrefix: "/file/", method: "GET", handler: fileRoute });
+http.route({ pathPrefix: "/calendar/", method: "GET", handler: calendarRoute });
 http.route({ path: "/api/median", method: "GET", handler: medianRoute });
 http.route({ path: "/api/median", method: "POST", handler: medianRoute });
 export default http;

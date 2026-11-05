@@ -49,6 +49,20 @@ export default defineSchema({
     connectAt: v.optional(v.number()),
     connectStudentId: v.optional(v.number()),
     /**
+     * Canvas, when the student has added it (canvas.ts): the school's Canvas address, the student's own access token
+     * (CREDENTIALS_KEY), who Canvas says they are, and why Canvas stopped accepting the token, when it has (then the
+     * sync leaves Canvas alone until a new token is added).
+     */
+    canvasOrigin: v.optional(v.string()),
+    sealedCanvas: v.optional(v.string()),
+    canvasName: v.optional(v.string()),
+    canvasRefused: v.optional(v.string()),
+    /**
+     * The calendar feed's current link (calendar.ts): a random value its URL is signed over. Unset until the student
+     * asks for a link; a new one ends the old link.
+     */
+    calendarNonce: v.optional(v.string()),
+    /**
      * When the background scheduler next syncs this account (convex/sync.ts). Each account keeps its own phase in the
      * quarter hour, so background syncs are spread out rather than all at once. Unset until the scheduler first sees it.
      */
@@ -94,6 +108,20 @@ export default defineSchema({
   }).index("by_account_kind", ["accountId", "kind"]),
 
   /**
+   * What Canvas last said for an account (canvas.ts): "courses", "announcements", and one "work:<courseId>" row per
+   * course (its assignments with the student's submissions, and its assignment groups). Shaped as connectCache: an
+   * error is kept beside the last good data.
+   */
+  canvasCache: defineTable({
+    accountId: v.id("accounts"),
+    kind: v.string(),
+    data: v.optional(v.any()),
+    fetchedAt: v.optional(v.number()),
+    error: v.optional(v.string()),
+    checkedAt: v.number(),
+  }).index("by_account_kind", ["accountId", "kind"]),
+
+  /**
    * What Compass last said for an account, trimmed to what the app shows: "tasks", "news", one "day:YYYY-MM-DD" row per
    * school day of the timetable (convex/timetable.ts), and "classes", every class seen on the timetable lately.
    */
@@ -126,7 +154,7 @@ export default defineSchema({
     steps: v.array(
       v.object({
         key: v.string(),
-        source: v.union(v.literal("compass"), v.literal("connect")),
+        source: v.union(v.literal("compass"), v.literal("connect"), v.literal("canvas")),
         status: v.union(v.literal("waiting"), v.literal("running"), v.literal("done"), v.literal("failed"), v.literal("skipped")),
         count: v.optional(v.number()),
         note: v.optional(v.string()),

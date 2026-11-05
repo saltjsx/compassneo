@@ -6,7 +6,8 @@ import { api } from "@compassneo/backend/api";
 import { useLoadOnce } from "./loads";
 
 /**
- * A class's resources (convex/resources.ts): Compass's Resources and Connect's Learning Content, one tree each.
+ * A class's resources (convex/resources.ts): Compass's Resources, Connect's Learning Content and the class's Canvas
+ * course's modules, one tree each.
  * Opening the hook asks the server to fetch them (it skips that if it did lately); the answer arrives through the query.
  *
  * Each side is a Side: "none" (this side has nothing for the class: no Connect, or the class is not on it), "missing"

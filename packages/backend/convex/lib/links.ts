@@ -1,9 +1,9 @@
 import type { Id } from "../_generated/dataModel";
 
 /**
- * Links to files that live on Compass or Connect (a class's resources, a task's attachment, what a student handed in, a
+ * Links to files that live on Compass, Connect or Canvas (a class's resources, a task's attachment, what a student handed in, a
  * classmate's photo). A browser cannot fetch them itself: they need the account's session cookies, which never leave
- * Convex. So the app links to Compass Neo's own route (http.ts, GET /file/...), which fetches the file with the session
+ * Convex (Canvas's: the token). So the app links to Compass Neo's own route (http.ts, GET /file/...), which fetches the file with the session
  * and passes it on.
  *
  * Each link names one file of one account and carries an HMAC of both under SESSION_KEY, so it cannot be bent to
@@ -11,7 +11,7 @@ import type { Id } from "../_generated/dataModel";
  * finds nobody to fetch for. Rotating SESSION_KEY ends every link.
  */
 
-export type FileSource = "compass" | "connect";
+export type FileSource = "compass" | "connect" | "canvas";
 
 const enc = new TextEncoder();
 
@@ -37,17 +37,51 @@ function key() {
   return keyPromise;
 }
 
-/** Every MAC is over this prefix and the payload, so it can never stand for anything else made with the key. */
+/** Every MAC is over a prefix naming what it is for and the payload, so it can never stand for anything else made with the key. */
 const DOMAIN = "compassneo/file-link/v1:";
-const macOf = async (payload: string) => new Uint8Array(await crypto.subtle.sign("HMAC", await key(), enc.encode(DOMAIN + payload))).slice(0, 18);
+const macFor = async (domain: string, payload: string) =>
+  new Uint8Array(await crypto.subtle.sign("HMAC", await key(), enc.encode(domain + payload))).slice(0, 18);
+const macOf = (payload: string) => macFor(DOMAIN, payload);
+
+/**
+ * A value as a token only this server could have made ("<payload>.<mac>", URL-safe): for links other than files, such
+ * as the calendar feed (calendar.ts). domain names what the token is for, so one kind can never pass as another.
+ */
+export async function signToken(domain: string, value: unknown): Promise<string> {
+  const payload = b64url(enc.encode(JSON.stringify(value)));
+  return `${payload}.${b64url(await macFor(`compassneo/${domain}:`, payload))}`;
+}
+
+/** What a signToken token holds, if its MAC is right for the domain. */
+export async function readToken<T>(domain: string, token: string): Promise<T | null> {
+  const [payload, mac] = token.split(".");
+  if (!payload || !mac) return null;
+  const want = await macFor(`compassneo/${domain}:`, payload);
+  let got: Uint8Array;
+  try {
+    got = fromB64url(mac);
+  } catch {
+    return null;
+  }
+  if (got.length !== want.length) return null;
+  let diff = 0;
+  for (let i = 0; i < want.length; i++) diff |= want[i]! ^ got[i]!;
+  if (diff !== 0) return null;
+  try {
+    return JSON.parse(new TextDecoder().decode(fromB64url(payload))) as T;
+  } catch {
+    return null;
+  }
+}
 
 const PATHS: Record<FileSource, RegExp> = {
   compass: /^\/Services\/(FileAssets\.svc\/DownloadFile|FileDownload\/FileRequestHandler)\?/,
   connect: /^\/connectapi\/files\//,
+  canvas: /^\/api\/v1\/files\/\d+$/,
 };
 
 /** The site URL Convex serves http.ts on. */
-const site = () => (process.env.CONVEX_SITE_URL ?? "").replace(/\/$/, "");
+export const site = () => (process.env.CONVEX_SITE_URL ?? "").replace(/\/$/, "");
 
 /** A link to one file of one account. name is what the browser saves it as. */
 export async function fileLink(accountId: Id<"accounts">, source: FileSource, path: string, name: string): Promise<string | null> {
@@ -87,7 +121,7 @@ export async function readLink(token: string): Promise<{ accountId: Id<"accounts
   if (diff !== 0) return null;
   try {
     const v = JSON.parse(new TextDecoder().decode(fromB64url(payload))) as { a: string; s: FileSource; p: string };
-    if ((v.s !== "compass" && v.s !== "connect") || !PATHS[v.s].test(v.p)) return null;
+    if (!(v.s in PATHS) || !PATHS[v.s].test(v.p)) return null;
     return { accountId: v.a as Id<"accounts">, source: v.s, path: v.p };
   } catch {
     return null;

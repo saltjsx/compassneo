@@ -7,9 +7,10 @@ import { percentOf, scoreOf, type ConnectNotice, type SubjectGrade } from "@comp
 import { hashToken } from "./lib/crypto";
 import { deviceAccount, withCompass, type Problem } from "./lib/compass";
 import { addDays, dayOf, daysBetween, isDay, schoolToday } from "./lib/days";
-import { huesFor, matchSubject, shortName, subjectName, teacherDirectory, type Person } from "./lib/match";
+import { huesFor, shortName, subjectName, teacherDirectory, type Person } from "./lib/match";
 import { key as teacherKey, teachersFor } from "./teachers";
 import { layAssemblies, noticesFor, type DayAssembly, type LessonAssembly } from "./lib/assemblies";
+import { gradeRows, subjectMatcher } from "./lib/grades";
 
 export type { DayAssembly, LessonAssembly } from "./lib/assemblies";
 
@@ -225,24 +226,43 @@ export const day = query({
     if (!token || !isDay(day)) return null;
     const account = await accountFor(ctx, token);
     if (!account) return null;
-
     const row = await compassRow(ctx, account._id, `day:${day}`);
     if (!row) return { status: "missing", day };
-    const items = (row.data ?? []) as StoredLesson[];
+    return (await readDays(ctx, account, [{ day, items: (row.data ?? []) as StoredLesson[] }]))[0]!;
+  },
+});
 
-    const classes = ((await compassRow(ctx, account._id, "classes"))?.data ?? []) as StoredClass[];
-    const grades = ((await connectRow(ctx, account._id, "grades"))?.data ?? []) as SubjectGrade[];
-    const notices = ((await connectRow(ctx, account._id, "notices"))?.data ?? []) as ConnectNotice[];
-    const tasks = ((await compassRow(ctx, account._id, "tasks"))?.data ?? []) as Array<{
-      id: number | null;
-      className: string | null;
-      name: string;
-      due: string | null;
-    }>;
+/**
+ * Kept days as the app shows them: each lesson joined to its teacher, colour, grades and tasks, the day's other
+ * entries, and the notices' assemblies laid over it. What every day shares (classes, grades, tasks, teachers, notices)
+ * is read once, so many days cost little more than one (the calendar feed, calendar.ts).
+ */
+export async function readDays(ctx: QueryCtx, account: Doc<"accounts">, days: Array<{ day: string; items: StoredLesson[] }>): Promise<Day[]> {
+  if (!days.length) return [];
+  const classes = ((await compassRow(ctx, account._id, "classes"))?.data ?? []) as StoredClass[];
+  const { source, grades: gradesRow } = await gradeRows(ctx, account);
+  const grades = (gradesRow?.data ?? []) as SubjectGrade[];
+  const subjectOfClass = await subjectMatcher(ctx, account, source);
+  const notices = ((await connectRow(ctx, account._id, "notices"))?.data ?? []) as ConnectNotice[];
+  const tasks = ((await compassRow(ctx, account._id, "tasks"))?.data ?? []) as Array<{
+    id: number | null;
+    className: string | null;
+    name: string;
+    due: string | null;
+  }>;
 
-    const who = await peopleFor(ctx, account.slug, grades, notices, items.flatMap(l => [l.teacher, l.cover]));
-    const hues = huesFor([...classes.map(c => c.code), ...items.filter(l => l.isClass).map(l => l.code)]);
+  const who = await peopleFor(
+    ctx,
+    account.slug,
+    grades,
+    notices,
+    days.flatMap(d => d.items.flatMap(l => [l.teacher, l.cover])),
+  );
+  const hues = huesFor([...classes.map(c => c.code), ...days.flatMap(d => d.items.filter(l => l.isClass).map(l => l.code))]);
+  const sorted = days.map(d => d.day).sort();
+  const news = await noticesFor(ctx, account, addDays(sorted[0]!, -30), addDays(sorted[sorted.length - 1]!, 1));
 
+  return days.map(({ day, items }) => {
     // Grades for the semester this day is in, else the other one (a new semester before Connect has it).
     const semester = semesterOf(day);
     const inSemester = grades.filter(g => g.semester === semester);
@@ -252,7 +272,7 @@ export const day = query({
       if (gradeFor.has(l.code)) return gradeFor.get(l.code)!;
       const known = classes.find(c => c.code === l.code);
       const teachers = [...new Set([...(known?.teachers ?? []), ...(l.teacher ? [l.teacher] : [])])];
-      const g = matchSubject({ code: l.code, subject: l.subject, teachers }, pool);
+      const g = subjectOfClass({ code: l.code, subject: l.subject, teachers }, pool);
       const out = g ? gradeFrom(g) : null;
       gradeFor.set(l.code, out);
       return out;
@@ -288,12 +308,10 @@ export const day = query({
 
     // The school's notices over it: assemblies at their times, and the lessons they take marked. Laid here, at read
     // time, so a corrected notice (or a fresh read of one) changes the day without touching what Compass said.
-    const news = await noticesFor(ctx, account, addDays(day, -30), addDays(day, 1));
     const laid = layAssemblies(lessons, day, news, account);
-
-    return { status: "ready", day, lessons: laid.lessons, events, assemblies: laid.assemblies };
-  },
-});
+    return { status: "ready" as const, day, lessons: laid.lessons, events, assemblies: laid.assemblies };
+  });
+}
 
 // ---------- keeping ----------
 
