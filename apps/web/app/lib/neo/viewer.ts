@@ -16,7 +16,7 @@ export type ViewerItem = {
   href: string;
   name: string;
   /** Where it came from, for the little logo in the header. */
-  source?: "compass" | "connect";
+  source?: "compass" | "connect" | "canvas";
   /** The file's type when the caller knows it (Connect does); else it comes with the file. */
   mime?: string | null;
 };

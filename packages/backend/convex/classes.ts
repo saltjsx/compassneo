@@ -1,11 +1,12 @@
 import { v } from "convex/values";
 import { query } from "./_generated/server";
 import { percentOf, scoreOf, weightedOf, type ConnectClass, type ConnectNotice, type Spread, type SubjectGrade } from "@compassneo/connect";
-import { isWA } from "./lib/connect";
 import { addDays, isDay } from "./lib/days";
 import { historyKey, type History, type HistoryPoint } from "./lib/history";
 import { huesFor, matchSubject, shortName, subjectName, type Person } from "./lib/match";
 import { accountFor, compassRow, connectRow, peopleFor, periodsOf, semesterOf, type StoredClass, type StoredLesson } from "./timetable";
+import { canvasView, currentClasses } from "./lib/courses";
+import { gradeRows, subjectMatcher } from "./lib/grades";
 
 /**
  * Everything Compass Neo knows about one class, for the class panel: its lessons over the weeks around the day being
@@ -81,7 +82,7 @@ export type SemesterGrade = {
 };
 
 export type ClassGrades =
-  /** Not a WA public school: no Connect. */
+  /** No grades anywhere: not a WA public school (no Connect), and no Canvas added. */
   | { status: "none" }
   | { status: "unavailable"; reason: string }
   | { status: "loading" }
@@ -97,7 +98,17 @@ export type ClassGrades =
       historySince: number | null;
     };
 
-export type ClassNotice = { id: number; title: string; text: string | null; author: string | null; at: string | null };
+/** A teacher's notice to the class: a Connect notice, or a Canvas announcement in the class's course. */
+export type ClassNotice = {
+  id: number | string;
+  title: string;
+  text: string | null;
+  author: string | null;
+  at: string | null;
+  source: "connect" | "canvas";
+  /** Where it opens on its own site (Canvas). */
+  url: string | null;
+};
 export type ClassTask = { id: number | null; name: string; due: string | null; status: number | null };
 
 export type ClassDetail = {
@@ -212,11 +223,11 @@ export const detail = query({
     if (!account) return null;
 
     const classes = ((await compassRow(ctx, account._id, "classes"))?.data ?? []) as StoredClass[];
-    const gradesRow = await connectRow(ctx, account._id, "grades");
+    const { source: gradeSource, grades: gradesRow, history: historyRow } = await gradeRows(ctx, account);
     const grades = (gradesRow?.data ?? []) as SubjectGrade[];
     const notices = ((await connectRow(ctx, account._id, "notices"))?.data ?? []) as ConnectNotice[];
     const connectClasses = ((await connectRow(ctx, account._id, "classes"))?.data ?? []) as ConnectClass[];
-    const history = ((await connectRow(ctx, account._id, "history"))?.data ?? null) as History | null;
+    const history = (historyRow?.data ?? null) as History | null;
     const allTasks = ((await compassRow(ctx, account._id, "tasks"))?.data ?? []) as Array<ClassTask & { className: string | null }>;
 
     // The class's lessons in the weeks around the day, from the kept days.
@@ -244,14 +255,15 @@ export const detail = query({
 
     // Grades: the day's semester (or whichever Connect has), and the same subject in the other.
     let gradesOut: ClassGrades;
-    if (!isWA(account.slug)) gradesOut = { status: "none" };
+    const subjectOfClass = await subjectMatcher(ctx, account, gradeSource);
+    if (!gradeSource) gradesOut = { status: "none" };
     else if (gradesRow?.data) {
       const semester = semesterOf(day);
       const inSemester = grades.filter(g => g.semester === semester);
       const klass = { code, subject: subjectRaw, teachers: teacherCodes };
-      const current = matchSubject(klass, inSemester.length ? inSemester : grades);
+      const current = subjectOfClass(klass, inSemester.length ? inSemester : grades);
       const others = grades.filter(g => g !== current && g.semester !== current?.semester);
-      const other = (current && others.find(g => squash(g.subject) === squash(current.subject))) ?? matchSubject(klass, others);
+      const other = (current && others.find(g => squash(g.subject) === squash(current.subject))) ?? subjectOfClass(klass, others);
       gradesOut = {
         status: "ready",
         fetchedAt: gradesRow.fetchedAt ?? gradesRow.checkedAt,
@@ -261,7 +273,8 @@ export const detail = query({
         historySince: history?.since ?? null,
       };
     } else if (gradesRow?.error) gradesOut = { status: "unavailable", reason: gradesRow.error };
-    else if (!account.sealedLogin) gradesOut = { status: "unavailable", reason: "Sign in again so Compass Neo can open Connect for you." };
+    else if (gradeSource === "connect" && !account.sealedLogin) gradesOut = { status: "unavailable", reason: "Sign in again so Compass Neo can open Connect for you." };
+    else if (gradeSource === "canvas" && account.canvasRefused) gradesOut = { status: "unavailable", reason: account.canvasRefused };
     else gradesOut = { status: "loading" };
 
     // Teachers: the timetable's, then Connect's staff for the subject that the timetable did not name.
@@ -280,6 +293,7 @@ export const detail = query({
     }
 
     const connectClass = connectClassFor(code, subjectRaw, teacherCodes, connectClasses, notices);
+    const canvas = await canvasView(ctx, account, await currentClasses(ctx, account));
     const week = usualWeek(days);
 
     return {
@@ -307,13 +321,18 @@ export const detail = query({
         .filter(t => t.className === code)
         .map(t => ({ id: t.id, name: t.name, due: t.due, status: t.status ?? null }))
         .sort((a, b) => (a.due ?? "9999").localeCompare(b.due ?? "9999")),
-      notices: connectClass
-        ? notices
-            .filter(n => n.classId === connectClass.classId)
-            .sort((a, b) => (b.at ?? "").localeCompare(a.at ?? ""))
-            .slice(0, MAX_NOTICES)
-            .map(n => ({ id: n.id, title: n.title, text: n.text, author: n.author, at: n.at }))
-        : [],
+      notices: [
+        ...(connectClass
+          ? notices
+              .filter(n => n.classId === connectClass.classId)
+              .map(n => ({ id: n.id, title: n.title, text: n.text, author: n.author, at: n.at, source: "connect" as const, url: null }))
+          : []),
+        ...(canvas?.announcements ?? [])
+          .filter(a => canvas!.classOfAnnouncement(a) === code)
+          .map(a => ({ id: a.id, title: a.title, text: a.text, author: a.author, at: a.at, source: "canvas" as const, url: a.url })),
+      ]
+        .sort((a, b) => (b.at ?? "").localeCompare(a.at ?? ""))
+        .slice(0, MAX_NOTICES),
       connectClass: connectClass ? { name: connectClass.name, code: connectClass.code } : null,
     };
   },

@@ -24,13 +24,20 @@
   lesson plan, and what is due. Step between days; the week back and the fortnight ahead are already synced.
 - **Every class in one panel.** Press a class for its lessons, grade, assessments, work, notices, files and classmates,
   pulled from Compass and (at WA public schools) Connect, side by side.
+- **Canvas too.** At a school that runs Canvas beside Compass, add it from your profile and its assignments join your
+  to-do list and each class's work, its modules the class's files, its announcements the class's notices, and its marks
+  your grades, each on the right class.
 - **Grades that make sense.** Every assessment with its weighting, how your mark has moved, where you sit in the class,
   and *where you could finish*: "get 70% on the rest and you finish on 74%".
+- **Your last lesson before it's due.** Every piece of work still to do says when the class meets for the last time
+  before it is due ("Last lesson Thursday, P3"), or that there are no lessons of it left.
 - **Hand work in.** Upload to a Compass learning task or a Connect submission without leaving the app.
 - **Files that open.** PDFs, images, videos, YouTube and Loom open in place; grab a whole folder as one zip.
 - **You, too.** Attendance by term, class and period, your events and excursions, and your Chronicle.
 - **Notices, read for you.** The school's daily notices summed up in a line on home, the rest as bullet points (with
   their files) a press away, and the assemblies they announce shown on your timetable in place of the classes they take.
+- **Your timetable in your own calendar.** A link your phone's calendar subscribes to, with what Compass's own feed
+  leaves out: room changes, relief teachers, assemblies in place of the lessons they take, and when work is due.
 - **Stays signed in.** Compass signs everyone out daily. Compass Neo doesn't.
 - **Pretty.** Dark (by default), light or auto, springy motion, and a colour for every class.
 
@@ -46,11 +53,18 @@ Compass Neo has to sign in to Compass as you, so here is exactly what it keeps:
 - Your **devices hold a random token**, and the server keeps only its hash.
 - **Signing out of your last device deletes your account**, your login and everything synced for it.
 - If Compass rejects your saved login (say you changed your password), it is forgotten and you are asked to sign in.
+- **Canvas**, if you add it, is read with an access token you make in Canvas yourself. It is encrypted the same way as
+  your password, used only to read, and deleted when you remove Canvas or sign out of your last device. Deleting the
+  token in Canvas stops it working at once.
 - Sign-in attempts are rate limited.
 - The **school's notices** (its news feed, never anything of yours) are sent to Anthropic's Claude API to be read into
   bullet points, once per notice per school, when the server has an API key.
 
-It reads from Compass and Connect and writes only when you hand in work, after asking you first.
+- The **calendar feed** is off until you ask for a link. The link is the only key to it (a calendar app cannot sign
+  in), so anyone with it can see your timetable; turning it off ends it, and turning it on again makes a new one.
+
+It reads from Compass, Connect and Canvas, and writes only when you hand in work on Compass or Connect, after asking you
+first. Nothing is ever handed in on Canvas: its work opens on Canvas.
 
 ## Stack
 
@@ -59,6 +73,7 @@ apps/web            React Router 8 (SPA mode), Glaze design system retuned for C
 packages/backend    Convex: school directory, sign-in, sessions, sync, caches
 packages/compass    fetch-only Compass client, shared by every runtime (Convex, and later phone and watch)
 packages/connect    fetch-only client for WA DET Connect (grades, content, submissions), same login as Compass
+packages/canvas     fetch-only, read-only client for Canvas LMS (courses, work, modules, announcements), own token
 packages/brand      logo SVGs and brand colours for clients that cannot read CSS tokens
 ```
 
@@ -97,7 +112,9 @@ Make a key with `node -e "console.log(require('crypto').randomBytes(32).toString
 - **Web:** Vercel builds the repo root with `vercel.json` (`bun run build`, serving `apps/web/build/client` with every
   path falling back to `index.html`). Set `VITE_CONVEX_URL` to the production Convex URL.
 
-Other useful scripts: `bun run typecheck`, and `bun run lint` (Glaze's lint) before shipping a screen.
+Other useful scripts: `bun run typecheck`, `bun run test` (bun's own runner: the Canvas client in `packages/canvas`,
+and the backend's pure logic in `packages/backend/test`, kept outside `convex/` so it is never deployed), and
+`bun run lint` (Glaze's lint) before shipping a screen.
 
 # How it works
 
@@ -156,6 +173,70 @@ the one write, kept out of the allow-list on purpose: `handIn` uploads the file 
 (`files/upload/DomainSchoolClass/<id>?uploadType=FILE&purpose=ATTACHMENT&context=SUBMISSION`) and attaches it to the
 submission (`submission/<id>/saveStudentSubmission`), the same two calls Connect's own upload dialog makes.
 
+## Canvas
+
+Many schools run Canvas beside Compass: Compass for the timetable, attendance and reports, Canvas for each course's work,
+files and announcements. A student adds it from the profile card with the school's Canvas address and an access token
+(Account, Settings, New access token). `canvas.add` checks both with Canvas itself (`/users/self`) and keeps the token
+sealed under `CREDENTIALS_KEY`, beside the Compass login.
+
+**Why a token.** Every school puts its own sign-on in front of Canvas: Microsoft, Google, or an identity service of its
+own, often with a second step. Each is a different flow, and replaying one without a browser means storing the
+student's school password for a site that is not Compass, and breaking whenever the school changes its sign-on. An
+access token is what Canvas documents for an app reading the API as the student; it works the same at every school, can
+be deleted from Canvas at any time, and is the only thing kept.
+
+The Canvas address is whatever the student types, so it and everything a server there says are untrusted: an address
+has to be a public name (`publicHost`: no IP addresses, no `localhost`, `.internal`, `.local` and the like), and a
+file's download link is followed by hand, every hop checked the same way and https. `packages/canvas` only ever sends
+`GET`, and only to an allow-list of paths; every list follows Canvas's `Link` header
+to a cap. Ids stay strings (`application/json+canvas-string-ids`): Canvas's global ids pass 2^53.
+
+The sync reads it after Compass and Connect, full runs only (`convex/sync.ts`, `runCanvas`): the student's active
+courses (with teachers and their score), each course's assignments with the student's own submission and its assignment
+groups (`work:<courseId>` rows in `canvasCache`: the assignments due in the last 120 days or later, and every assignment
+that counts towards a grade all year, lean, for the grades step), with their descriptions kept apart (`text:<courseId>`,
+under a byte budget) so the queries that read every course's work stay small, and the last three weeks' announcements,
+and the grades worked out from them (below). A class's panel fetches its course's assignments again when they are over
+five minutes old. If the courses step fails, the later steps use the courses as last kept. A token Canvas refuses is
+noted on the account (`canvasRefused`, only if it is still the account's token): Canvas is left alone, Compass carries
+on, and the profile asks for a new token.
+
+**Which class.** `lib/match.ts` `matchCourses` gives each timetable class its course: by code first (a course coded
+`8SCI` is class `8SCI2`), else by shared teachers and the rarer words of the names, each word counting by how many
+courses have it, so "Digital Technology" and "Food Technology" do not match on "technology". Each course goes to
+one class. Some schools keep formal assessments, or the year's notices, in a course of their own; an assignment or
+announcement in a course no class claims goes to the class its name names (`classForName`: the class's subject or its
+course's name, its code without the year, "CT", or the short name, "Maths"), else to none (`lib/courses.ts`).
+
+**Where it stands.** `canvasState` reads the student's own submission, never Canvas's upcoming list (which keeps work
+already handed in): handed in (late or not), excused, locked, missing or past its date (overdue), still to do, or `none`
+when it is not handed in on Canvas (on paper, or an exam's notice). On home's To do, Canvas work is listed when it has a
+date (Canvas's own to-do leaves undated work out too): still to do, overdue for four weeks (Canvas marks everything not
+handed in as missing all year, quizzes nobody chased up among it), and work not handed in on Canvas the way Compass's
+offline tasks are. Each class's Work shows all of it beside Compass's and Connect's, with an "Open in Canvas" in place of
+handing in, and the class's notices take its course's announcements.
+
+**Grades.** A school without Connect gets the Grades row from Canvas (`lib/grades.ts`): the sync's grades step works
+them out from the courses and assignments already kept (`canvas.keepGrades`, no call to Canvas) in Connect's own shape,
+with a grade history beside them (`lib/history.ts`), so the Grades row, the Grades page and each class's grade read
+them unchanged, through `gradeRows`. A subject is a course that is a timetable class's, or that shows the student a
+score of its own; its tasks are the assignments that count, plus marks from a course no class claims that name it (a
+school's course of formal assessments puts each subject's exams there). A mark counts once Canvas has released it, and
+the course's own score is the subject's mark when it shows one. Weightings are only ever Canvas's own (assignment group
+weights, when a course uses them): otherwise a subject is its points out of all of them, as Canvas works an unweighted
+course out, and no task claims a share of the grade, since schools often weight formal tasks only in the task's words.
+A class finds its subject through its course (`subjectMatcher`), the same course its work and files come from.
+
+**Files.** A class's Files tab takes its course's modules (`resources.ts`), one folder per module in the teacher's
+order: many schools hide a course's Files from students, and the modules are where the content is anyway. A module whose
+items Canvas leaves out of the list (a course with very many) has them asked for on their own. A file opens
+through Compass Neo's own file route like Compass's and Connect's (`lib/links.ts`, source `canvas`): the route asks
+Canvas for the file with the token and fetches its short-lived download link (signed for the student, so the token
+never goes with it), and a file over the route's limit is left to Canvas. Pages, assignments, quizzes, discussions and
+outside links open where they are. Each side of a class's Files and Work is fetched on its own, so Compass not
+answering never holds Canvas back.
+
 ## Sync
 
 `convex/sync.ts` fetches an account in runs, one step after another, each step written to a `syncs` row as it starts
@@ -164,7 +245,7 @@ each see one session from us. Two kinds:
 
 - **Full:** Compass (profile and photo, the timetable from a week back to a fortnight on, learning tasks in full, news,
   attendance, events, Chronicle, teachers' photos), then Connect at a WA school (sign-in, classes, notices, grades,
-  work, attendance).
+  work, attendance), then Canvas when the student has added it (courses, work, announcements).
 - **Quick:** only what changes minute to minute: the timetable from yesterday to a week on, learning tasks, news. No
   Connect.
 
@@ -324,6 +405,25 @@ Connect shows marks with no dates, so grade history is kept here: each grades fe
 row in `connectCache` (`convex/lib/history.ts`), a point whenever a subject's score moves and the moment each mark first
 appeared. Marks already there when an account's history began are its baseline and have no day.
 
+## Calendar feed
+
+`convex/calendar.ts`: the timetable as the app shows it, as iCalendar for a phone's or laptop's calendar to subscribe
+to, at `GET /calendar/<link>/compass-neo.ics` (`convex/http.ts`). It is built from what the sync keeps, never with a
+call to Compass, from a week back to as far ahead as days are kept (the sync's fortnight, and further where someone
+opened a day). Each lesson says its room and teacher, and when a relief teacher, a room change, a revised bell schedule
+or an assembly has changed it; assemblies and the day's other entries are entries of their own; work still to hand in
+(the To do list, below) sits on the day it is due as an all-day entry with the time in its title. Times are UTC, all-day
+entries the school's own dates (`lib/ics.ts`).
+
+The days are read with the day query's own reader (`readDays` in `convex/timetable.ts`), which reads what every day
+shares once, so a feed of two months costs little more than one day.
+
+A calendar app cannot sign in, so the link is the key: a signed token (`signToken` in `lib/links.ts`, under its own
+domain so it can never pass for a file link) naming the account and a random value kept on it (`calendarNonce`). The
+profile card turns the feed on (`calendar.enable`, which makes the value), gives the link to copy or as `webcal://` to
+open in the device's calendar, and turns it off (`calendar.disable`, which clears it); a link whose value is not the
+account's current one answers 410. Signing out deletes the account, and the link with it.
+
 ## Grades and to-do on home
 
 Under the day, **Grades** is one row, always there and never folded (`features/home/grades-row.tsx`): every subject's
@@ -337,16 +437,21 @@ when it is due and whether it is in), and the other semester. Any of those opens
 or out of reach, from the outline's weightings), then the class panel's own grade sections (`features/class/pages.tsx`:
 the grade against the class, the grade as it built up, where it could finish, the semesters side by side, every
 assessment, what changed), and what is still to come in it, with a way into the class. A school without Connect has no
-row.
+row, unless the student has added Canvas (see Canvas, above).
 
-Under it, above the classes, **To do** folds like the class list and starts folded, its count and how much is
-overdue in the heading (`features/home/todo-list.tsx`, fed by `convex/overview.ts` from what the sync keeps). It lists
-every piece of work not handed in: Compass's learning tasks still to do, and Connect's open submissions, whose boards
-the sync's Connect work step reads for every current class (`work.fetchConnectWork`, at most eight classes). Every
-overdue piece comes first and is always shown, however late (for as long as Compass's kept tasks or the Connect board
-hold it); then what is coming up, five at a time. A Compass task with nothing to hand in online is listed from a
-fortnight before its date to a week after (overdue then), since nothing online says whether it went in on paper. A row
-opens its class on its Work. The class list under it starts folded too: the day above already shows today's classes.
+Under it, above the classes, **To do** folds like the class list and starts folded, its count and how much is overdue in
+the heading (`features/home/todo-list.tsx`, fed by `convex/overview.ts` from what the sync keeps). It lists every piece
+of work not handed in: Compass's learning tasks still to do, and Connect's open submissions, whose boards the sync's
+Connect work step reads for every current class (`work.fetchConnectWork`, at most eight classes). Canvas's assignments
+join them when the student has added Canvas (see Canvas, above). Every overdue piece comes first and is always shown,
+however late (for as long as Compass's kept tasks or the Connect board hold it); then what is coming up, five at a time.
+A Compass task with nothing to hand in online is listed from a fortnight before its date to a week after (overdue then),
+since nothing online says whether it went in on paper. A row opens its class on its Work. Each piece still to come says
+its class's last lesson before it is due, here and on its own page in the class panel (`convex/lib/lessons.ts`): the
+last lesson of that class still to start before the due date, read from the kept days (periods counted as the timetable
+counts them), "no lessons left" when every day up to the due date is kept and none has one, and nothing when a day
+before it is not kept (the sync fetches a fortnight ahead). The class list under it starts folded too: the day above
+already shows today's classes.
 
 ## Design
 

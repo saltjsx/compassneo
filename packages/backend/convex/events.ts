@@ -11,6 +11,7 @@ import { teacherDirectory } from "./lib/match";
 import type { ChronicleEntry } from "@compassneo/compass";
 import type { ConnectNotice, SubjectGrade } from "@compassneo/connect";
 import { readRow } from "./cache";
+import { gradeRows } from "./lib/grades";
 
 /**
  * Events: excursions, clubs, assemblies, exams, from Compass's calendar (everything that is not a class). This year
@@ -65,7 +66,7 @@ export const get = query({
     const leads = await teachersFor(ctx, account.slug, [...groups.values()].map(l => l[0]!.lead));
     // Staff codes to names, from every full name Compass Neo has seen: Chronicle's authors, Connect's staff and notices.
     const chronicle = ((await readRow(ctx, account._id, "compass", "chronicle"))?.data as { entries?: ChronicleEntry[] } | null)?.entries ?? [];
-    const grades = ((await readRow(ctx, account._id, "connect", "grades"))?.data ?? []) as SubjectGrade[];
+    const grades = ((await gradeRows(ctx, account)).grades?.data ?? []) as SubjectGrade[];
     const notices = ((await readRow(ctx, account._id, "connect", "notices"))?.data ?? []) as ConnectNotice[];
     const directory = teacherDirectory([
       ...chronicle.map(x => x.by),

@@ -6,11 +6,15 @@ import type { ConnectClass, ConnectNotice, Spread, SubjectGrade } from "@compass
 import { isWA } from "./lib/connect";
 import { addDays, isDay, schoolToday } from "./lib/days";
 import { historyKey, type History, type HistoryPoint } from "./lib/history";
+import { lastLessons, type LastLesson } from "./lib/lessons";
 import { huesFor, matchSubject, shortName } from "./lib/match";
 import { readRow } from "./cache";
 import { connectClassFor, semesterGrade, type Assessment, type SemesterGrade } from "./classes";
 import { accountFor, compassRow, connectRow, semesterOf, type StoredClass } from "./timetable";
 import { compassState, connectKind, connectState, type ConnectRow, type WorkState } from "./work";
+import { canvasState } from "./canvas";
+import { canvasView } from "./lib/courses";
+import { gradeRows, subjectMatcher, type GradeSource } from "./lib/grades";
 
 /**
  * Home's overview of the year, above the classes: every grade at once (grades, for the Grades row and its page in the
@@ -37,6 +41,12 @@ const OFFLINE_AHEAD_DAYS = 14;
  * (work.ts KEEP_DAYS) or the Connect board lists it open.
  */
 const OFFLINE_OVERDUE_DAYS = 7;
+/**
+ * Canvas marks everything not handed in by its date missing, quizzes nobody chased up among it, and keeps it so all
+ * year. Overdue Canvas work is listed for four weeks after its date (as long as Canvas's own to-do keeps it); after
+ * that it is left to the class's Work.
+ */
+const CANVAS_OVERDUE_DAYS = 28;
 
 const DAY = 86400 * 1000;
 const round1 = (n: number) => Math.round(n * 10) / 10;
@@ -152,12 +162,14 @@ export type UpcomingAssessment = {
 };
 
 export type OverviewGrades =
-  /** Not a WA public school: no Connect, so no grades. */
+  /** No grades anywhere: not a WA public school (no Connect), and no Canvas added. */
   | { status: "none" }
   | { status: "unavailable"; reason: string }
-  | { status: "loading" }
+  | { status: "loading"; source: GradeSource }
   | {
       status: "ready";
+      /** Where the grades come from: Connect, or Canvas (lib/grades.ts). */
+      source: GradeSource;
       fetchedAt: number;
       error: string | null;
       /** When Compass Neo began keeping this account's grade history. */
@@ -232,17 +244,19 @@ export const grades = query({
     if (!token || !isDay(day)) return null;
     const account = await accountFor(ctx, token);
     if (!account) return null;
-    // The same answers as connect.grades and the class panel's ClassGrades.
-    if (!isWA(account.slug)) return { status: "none" };
-    const gradesRow = await connectRow(ctx, account._id, "grades");
+    // The same answers as the class panel's ClassGrades.
+    const { source, grades: gradesRow, history: historyRow } = await gradeRows(ctx, account);
+    if (!source) return { status: "none" };
     if (!gradesRow?.data) {
       if (gradesRow?.error) return { status: "unavailable", reason: gradesRow.error };
-      if (!account.sealedLogin) return { status: "unavailable", reason: "Sign in again so Compass Neo can open Connect for you." };
-      return { status: "loading" };
+      if (source === "connect" && !account.sealedLogin) return { status: "unavailable", reason: "Sign in again so Compass Neo can open Connect for you." };
+      if (source === "canvas" && account.canvasRefused) return { status: "unavailable", reason: account.canvasRefused };
+      return { status: "loading", source };
     }
 
     const all = gradesRow.data as SubjectGrade[];
-    const history = ((await connectRow(ctx, account._id, "history"))?.data ?? null) as History | null;
+    const history = (historyRow?.data ?? null) as History | null;
+    const subjectOfClass = await subjectMatcher(ctx, account, source);
     const { current, hues } = await classesOf(ctx, account);
     const fetchedAt = gradesRow.fetchedAt ?? gradesRow.checkedAt;
     // Trends are measured from a week before the latest fetch, so the answer depends on the data, not the clock.
@@ -260,12 +274,13 @@ export const grades = query({
     // it has the same name; else a class picks it only when the names agree too (strict), since the teacher of last
     // semester's subject may well teach a different class now.
     const classOf = new Map<SubjectGrade, StoredClass>();
-    const named = (c: StoredClass, g: SubjectGrade) => !!matchSubject({ code: c.code, subject: c.subject, teachers: [] }, [g]);
+    const named = (c: StoredClass, g: SubjectGrade) =>
+      source === "canvas" ? subjectOfClass(c, [g]) === g : !!matchSubject({ code: c.code, subject: c.subject, teachers: [] }, [g]);
     const pick = (subjects: SubjectGrade[], strict: boolean) => {
       const picked = new Map<SubjectGrade, StoredClass[]>();
       for (const c of current) {
         if (shortName(c.subject, c.code) === "Homeroom") continue;
-        const g = matchSubject({ code: c.code, subject: c.subject, teachers: c.teachers }, subjects);
+        const g = subjectOfClass({ code: c.code, subject: c.subject, teachers: c.teachers }, subjects);
         if (g && (!strict || named(c, g))) picked.set(g, [...(picked.get(g) ?? []), c]);
       }
       for (const [g, cs] of picked) {
@@ -383,6 +398,7 @@ export const grades = query({
 
     return {
       status: "ready",
+      source,
       fetchedAt,
       error: gradesRow.error ?? null,
       historySince: history?.since ?? null,
@@ -399,9 +415,9 @@ export const grades = query({
 // ---------- to do ----------
 
 export type TodoItem = {
-  /** The work item's key, as the class panel's Work section has it ("compass:4893", "connect:6973695042"). */
+  /** The work item's key, as the class panel's Work section has it ("compass:4893", "connect:6973695042", "canvas:5521"). */
   key: string;
-  source: "compass" | "connect";
+  source: "compass" | "connect" | "canvas";
   name: string;
   /** The timetable class it is for (pressing it opens that class's work), when one on the timetable now matches. */
   code: string | null;
@@ -412,8 +428,10 @@ export type TodoItem = {
   overdue: boolean;
   /** Compass marks it important. */
   important: boolean;
-  /** Compass keeps no hand-in for it online (no status), so it is listed only while its due date is near. */
+  /** Nothing online keeps its hand-in (no Compass status, not handed in on Canvas), so it is listed only while its due date is near. */
   offline: boolean;
+  /** The class's last lesson before it is due, from the kept timetable (lib/lessons.ts); null when that is not known. */
+  lastLesson: LastLesson | null;
 };
 
 export type Todo = {
@@ -437,59 +455,101 @@ export const todo = query({
     const account = await accountFor(ctx, token);
     if (!account) return null;
     // Overdue is worked out against the clock, as the class panel's work query does.
-    const now = Date.now();
-    const { current, hues } = await classesOf(ctx, account);
-    const known = new Map(current.map(c => [c.code, c]));
-    const items: TodoItem[] = [];
-
-    const detail = await readRow(ctx, account._id, "compass", "taskdetail");
-    for (const t of (detail?.data ?? []) as CompassTask[]) {
-      const offline = t.me?.status == null;
-      const state: WorkState = compassState(t, now);
-      const due = t.due ? Date.parse(t.due) : null;
-      const listed = offline
-        ? due != null && due >= now - OFFLINE_OVERDUE_DAYS * DAY && due <= now + OFFLINE_AHEAD_DAYS * DAY
-        : state === "todo" || state === "overdue";
-      if (!listed) continue;
-      const c = t.className ? known.get(t.className) : undefined;
-      items.push({
-        key: `compass:${t.id}`,
-        source: "compass",
-        name: t.name,
-        code: c?.code ?? null,
-        className: c ? shortName(c.subject, c.code) : (t.className ?? "Compass"),
-        hue: c ? (hues.get(c.code) ?? null) : null,
-        due: t.due,
-        overdue: offline ? due! < now : state === "overdue",
-        important: t.important,
-        offline,
-      });
-    }
-
-    for (const b of await boardsOf(ctx, account, current)) {
-      const c = b.code ? known.get(b.code) : undefined;
-      for (const s of b.row.list) {
-        const state = connectState(s, b.row.mine[String(s.id)], now);
-        if (state !== "todo" && state !== "overdue") continue;
-        items.push({
-          key: `connect:${s.id}`,
-          source: "connect",
-          name: s.name,
-          code: c?.code ?? null,
-          className: c ? shortName(c.subject, c.code) : b.klass.name,
-          hue: c ? (hues.get(c.code) ?? null) : null,
-          due: s.due,
-          overdue: state === "overdue",
-          important: false,
-          offline: false,
-        });
-      }
-    }
-
-    const at = (d: string | null, none: number) => (d ? Date.parse(d) : none);
-    items.sort((a, b) =>
-      a.overdue !== b.overdue ? (a.overdue ? -1 : 1) : a.overdue ? at(b.due, 0) - at(a.due, 0) : at(a.due, Infinity) - at(b.due, Infinity),
-    );
-    return { items, overdue: items.filter(i => i.overdue).length, synced: !!detail?.data };
+    return todoFor(ctx, account, Date.now());
   },
 });
+
+/** The to-do list for an account at a moment: the query above, and the due dates in the calendar feed (calendar.ts). */
+export async function todoFor(ctx: QueryCtx, account: Doc<"accounts">, now: number): Promise<Todo> {
+  const { current, hues } = await classesOf(ctx, account);
+  const known = new Map(current.map(c => [c.code, c]));
+  const items: TodoItem[] = [];
+
+  const detail = await readRow(ctx, account._id, "compass", "taskdetail");
+  for (const t of (detail?.data ?? []) as CompassTask[]) {
+    const offline = t.me?.status == null;
+    const state: WorkState = compassState(t, now);
+    const due = t.due ? Date.parse(t.due) : null;
+    const listed = offline
+      ? due != null && due >= now - OFFLINE_OVERDUE_DAYS * DAY && due <= now + OFFLINE_AHEAD_DAYS * DAY
+      : state === "todo" || state === "overdue";
+    if (!listed) continue;
+    const c = t.className ? known.get(t.className) : undefined;
+    items.push({
+      key: `compass:${t.id}`,
+      source: "compass",
+      name: t.name,
+      code: c?.code ?? null,
+      className: c ? shortName(c.subject, c.code) : (t.className ?? "Compass"),
+      hue: c ? (hues.get(c.code) ?? null) : null,
+      due: t.due,
+      overdue: offline ? due! < now : state === "overdue",
+      important: t.important,
+      offline,
+      lastLesson: null,
+    });
+  }
+
+  for (const b of await boardsOf(ctx, account, current)) {
+    const c = b.code ? known.get(b.code) : undefined;
+    for (const s of b.row.list) {
+      const state = connectState(s, b.row.mine[String(s.id)], now);
+      if (state !== "todo" && state !== "overdue") continue;
+      items.push({
+        key: `connect:${s.id}`,
+        source: "connect",
+        name: s.name,
+        code: c?.code ?? null,
+        className: c ? shortName(c.subject, c.code) : b.klass.name,
+        hue: c ? (hues.get(c.code) ?? null) : null,
+        due: s.due,
+        overdue: state === "overdue",
+        important: false,
+        offline: false,
+        lastLesson: null,
+      });
+    }
+  }
+
+  // Canvas's assignments with a date (Canvas's own to-do leaves undated ones out too), by where the student's own
+  // submission stands; overdue ones for four weeks (CANVAS_OVERDUE_DAYS), and ones not handed in on Canvas as Compass's
+  // offline tasks are.
+  const view = await canvasView(ctx, account, current);
+  for (const [, row] of view?.work ?? []) {
+    for (const a of row.data?.assignments ?? []) {
+      if (!a.due) continue;
+      const state = canvasState(a, now);
+      const due = Date.parse(a.due);
+      const offline = state === "none";
+      const listed = offline
+        ? due >= now - OFFLINE_OVERDUE_DAYS * DAY && due <= now + OFFLINE_AHEAD_DAYS * DAY
+        : state === "todo" || (state === "overdue" && due >= now - CANVAS_OVERDUE_DAYS * DAY);
+      if (!listed) continue;
+      const code = view!.classOf(a);
+      const c = code ? known.get(code) : undefined;
+      const course = view!.courses.find(x => x.id === a.courseId);
+      items.push({
+        key: `canvas:${a.id}`,
+        source: "canvas",
+        name: a.name,
+        code: c?.code ?? null,
+        className: c ? shortName(c.subject, c.code) : (course?.name ?? "Canvas"),
+        hue: c ? (hues.get(c.code) ?? null) : null,
+        due: a.due,
+        overdue: offline ? due < now : state === "overdue" || due < now,
+        important: false,
+        offline,
+        lastLesson: null,
+      });
+    }
+  }
+
+  const last = await lastLessons(ctx, account, items, now);
+  for (const i of items) i.lastLesson = last.get(i.key) ?? null;
+
+  const at = (d: string | null, none: number) => (d ? Date.parse(d) : none);
+  items.sort((a, b) =>
+    a.overdue !== b.overdue ? (a.overdue ? -1 : 1) : a.overdue ? at(b.due, 0) - at(a.due, 0) : at(a.due, Infinity) - at(b.due, Infinity),
+  );
+  return { items, overdue: items.filter(i => i.overdue).length, synced: !!detail?.data };
+}

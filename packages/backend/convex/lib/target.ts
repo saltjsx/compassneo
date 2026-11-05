@@ -4,6 +4,7 @@ import type { ConnectClass, ConnectNotice } from "@compassneo/connect";
 import { connectClassFor } from "../classes";
 import { compassRow, connectRow, type StoredClass, type StoredLesson } from "../timetable";
 import { isWA } from "./connect";
+import { canvasView, currentClasses } from "./courses";
 
 /**
  * Where a class (by its Compass code, "10EN1") lives on each side: its Compass activity (for resources), and the
@@ -15,6 +16,8 @@ export type ClassTarget = {
   connect: { classId: number; name: string; code: string | null } | null;
   /** The school has Connect (WA public schools). */
   hasConnect: boolean;
+  /** The Canvas course it is, when the student has added Canvas and a course matches (lib/match.ts matchCourses). */
+  canvas: { courseId: string; name: string; url: string } | null;
 };
 
 export async function classTarget(ctx: QueryCtx, account: Doc<"accounts">, code: string): Promise<ClassTarget> {
@@ -45,5 +48,11 @@ export async function classTarget(ctx: QueryCtx, account: Doc<"accounts">, code:
     const k = connectClassFor(code, subject, known?.teachers ?? [], connectClasses, notices);
     if (k) connect = { classId: k.classId, name: k.name, code: k.code };
   }
-  return { code, activityId, connect, hasConnect };
+  let canvas: ClassTarget["canvas"] = null;
+  if (account.sealedCanvas && !account.canvasRefused) {
+    const view = await canvasView(ctx, account, await currentClasses(ctx, account));
+    const course = view?.courses.find(c => view.codeOf.get(c.id) === code);
+    if (course) canvas = { courseId: course.id, name: course.name, url: course.url };
+  }
+  return { code, activityId, connect, hasConnect, canvas };
 }

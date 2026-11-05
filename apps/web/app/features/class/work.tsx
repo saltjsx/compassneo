@@ -8,6 +8,7 @@ import {
   ChevronLeft,
   ChevronRight,
   Document,
+  External,
   Failed,
   Grade,
   Icon,
@@ -23,7 +24,7 @@ import {
   type GlazeIcon,
 } from "@/components/glaze/icon";
 import { cn } from "@/lib/glaze/utils";
-import { dayIn, dayName, daysApart, longDay } from "@/lib/neo/days";
+import { dayIn, dayName, daysApart, lastLessonLong, longDay } from "@/lib/neo/days";
 import { spring } from "@/lib/neo/motion";
 import { MAX_UPLOAD, useHandIn, type ClassWork, type WorkFile, type WorkItem, type WorkSlot } from "@/lib/neo/work";
 import { Block, ClassRank, PlanText, RankChip, SkeletonBlock } from "./sections";
@@ -135,12 +136,11 @@ export type WorkFlows = ReturnType<typeof useWorkFlows>;
 
 const readyItems = (side: ClassWork["compass"]) => (side.status === "ready" ? side.data : []);
 
-/** Every piece of work from both sides, and whether both have some (so each says where it is from). */
+/** Every piece of work from every side, and whether more than one has some (so each says where it is from). */
 export function workItems(work: ClassWork | null | undefined) {
   if (!work) return { items: [] as WorkItem[], both: false };
-  const compass = readyItems(work.compass);
-  const connect = readyItems(work.connect);
-  return { items: [...compass, ...connect], both: compass.length > 0 && connect.length > 0 };
+  const sides = [readyItems(work.compass), readyItems(work.connect), readyItems(work.canvas)];
+  return { items: sides.flat(), both: sides.filter(s => s.length > 0).length > 1 };
 }
 
 export function groupWork(items: WorkItem[], now: number) {
@@ -275,8 +275,8 @@ export function WorkPage({
         plain={wide}
       />
     ));
-  // A side still on its way may have work in it: no "nothing set" until both are in.
-  const waiting = work.compass.status === "missing" || work.connect.status === "missing";
+  // A side still on its way may have work in it: no "nothing set" until every side is in.
+  const waiting = work.compass.status === "missing" || work.connect.status === "missing" || work.canvas.status === "missing";
   const clear = !g.todo.length && !g.overdue.length;
 
   if (!items.length && waiting) return <SkeletonBlock rows={[40, 40, 40, 40]} />;
@@ -318,8 +318,9 @@ export function WorkPage({
         sides={[
           ["compass", work.compass],
           ["connect", work.connect],
+          ["canvas", work.canvas],
         ]}
-        what={{ compass: "learning tasks", connect: "submissions" }}
+        what={{ compass: "learning tasks", connect: "submissions", canvas: "assignments" }}
         now={now}
       />
     </>
@@ -356,6 +357,7 @@ export function WorkDetail({
   const flow = flows.flows[item.key];
   const graded = assessmentFor(item.name, assessments);
   const s = flow?.phase === "sending" ? "sending" : stateOf(item, now);
+  const last = (s === "todo" || s === "none") && lastLessonLong(item.lastLesson, today, zone);
 
   const head = (
     <div className="flex min-w-0 flex-col gap-2.5">
@@ -373,6 +375,12 @@ export function WorkDetail({
         <SourceMark source={item.source} size={16} />
         <span className="min-w-0 truncate type-label-sm text-text-2">{dueLong(item.due, zone, today, now)}</span>
       </div>
+      {last && (
+        <p className="flex min-w-0 items-center gap-2 px-1 type-caption text-text-3">
+          <Icon icon={Time} size={14} className="shrink-0" />
+          <span className="min-w-0 truncate">{last}</span>
+        </p>
+      )}
     </div>
   );
 
@@ -470,6 +478,21 @@ export function WorkDetail({
 
 function HandIn({ item, flows }: { item: WorkItem; flows: WorkFlows }) {
   const flow = flows.flows[item.key];
+  // Handed in on its own site (Canvas): a way there, never a hand-in here.
+  if (item.url && !item.canSubmit)
+    return (
+      <Block icon={Upload} title="Hand in" className="flex flex-col items-start gap-3 px-4 py-3.5">
+        <p className="flex items-start gap-2.5 type-body-sm text-text-2">
+          <Icon icon={Information} size={16} className="mt-0.5 text-text-3" />
+          {item.state === "none" ? (item.why ?? "This is not handed in online.") : `This is handed in on ${SOURCE[item.source]}.`}
+        </p>
+        <Button size="sm" variant="secondary" render={<a href={item.url} target="_blank" rel="noreferrer" />} nativeButton={false}>
+          <SourceMark source={item.source} size={14} />
+          Open in {SOURCE[item.source]}
+          <Icon icon={External} size={14} />
+        </Button>
+      </Block>
+    );
   if (!item.canSubmit && flow?.phase !== "done")
     return (
       <Block icon={Upload} title="Hand in" className="px-4 py-3.5">

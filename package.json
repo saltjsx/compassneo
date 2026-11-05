@@ -8,6 +8,7 @@
     "dev:backend": "bun run --filter @compassneo/backend dev",
     "build": "bun run --filter @compassneo/web build",
     "typecheck": "bun run --filter '*' typecheck",
-    "lint": "bun run --filter @compassneo/web lint"
+    "lint": "bun run --filter @compassneo/web lint",
+    "test": "bun run --filter '*' test"
   }
 }

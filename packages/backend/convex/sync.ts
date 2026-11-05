@@ -18,6 +18,9 @@ import { fetchChronicle } from "./chronicle";
 import { fetchNews } from "./announcements";
 import { farewellFor } from "./accounts";
 import { backgroundPool, poolFor, syncPool } from "./pools";
+import { CanvasError, type CanvasCourse, type CanvasSession } from "@compassneo/canvas";
+import { hasCanvas, withCanvas } from "./lib/canvas";
+import { fetchAnnouncements as fetchCanvasAnnouncements, fetchCourses, fetchWork as fetchCanvasWork } from "./canvas";
 
 /**
  * Sync: a pass over what Compass Neo keeps for an account, written to a `syncs` row step by step as it goes, so the
@@ -27,7 +30,7 @@ import { backgroundPool, poolFor, syncPool } from "./pools";
  * Two kinds of run:
  *   full   everything: Compass (profile, the timetable from a week back to a fortnight on, learning tasks, news,
  *          attendance, events, Chronicle, teachers' photos), then Connect at a WA school (sign-in, classes, notices,
- *          grades, work, attendance)
+ *          grades, work, attendance), then Canvas when the student has added it (courses, work, grades, announcements)
  *   quick  only what changes minute to minute: the timetable from yesterday to a week on, learning tasks, news
  *
  * Every run is a job in a workpool (convex/pools.ts), never an action a client waits on: `begin` writes the row and
@@ -82,16 +85,18 @@ const QUICK_AHEAD = 7;
 const COMPASS_STEPS = ["profile", "timetable", "tasks", "news", "attendance", "events", "chronicle", "people"] as const;
 const QUICK_STEPS = ["timetable", "tasks", "news"] as const;
 const CONNECT_STEPS = ["signin", "classes", "notices", "grades", "work", "attendance"] as const;
+const CANVAS_STEPS = ["courses", "work", "grades", "announcements"] as const;
 type CompassKey = (typeof COMPASS_STEPS)[number];
 type ConnectKey = (typeof CONNECT_STEPS)[number];
+type CanvasKey = (typeof CANVAS_STEPS)[number];
 type Reason = Doc<"syncs">["reason"];
 type Kind = "full" | "quick";
-type Source = "compass" | "connect";
+type Source = "compass" | "connect" | "canvas";
 type Status = "waiting" | "running" | "done" | "failed" | "skipped";
 type Outcome = { count?: number; note?: string };
 
 const reasonV = v.union(v.literal("sign-in"), v.literal("open"), v.literal("manual"), v.literal("active"), v.literal("background"));
-const sourceV = v.union(v.literal("compass"), v.literal("connect"));
+const sourceV = v.union(v.literal("compass"), v.literal("connect"), v.literal("canvas"));
 const statusV = v.union(v.literal("waiting"), v.literal("running"), v.literal("done"), v.literal("failed"), v.literal("skipped"));
 
 /** Runs someone is watching: the gauges draw these as they go. The rest are quiet. */
@@ -250,6 +255,8 @@ async function plan(ctx: MutationCtx, account: Doc<"accounts">, reason: Reason, 
   const steps = [
     ...(kind === "full" ? COMPASS_STEPS : QUICK_STEPS).map(key => ({ key, source: "compass" as const, status: "waiting" as const })),
     ...(connect ? CONNECT_STEPS.map(key => ({ key, source: "connect" as const, status: "waiting" as const })) : []),
+    // Canvas, when the student has added it and Canvas still takes the token. Full runs only: it changes slowly.
+    ...(kind === "full" && hasCanvas(account) ? CANVAS_STEPS.map(key => ({ key, source: "canvas" as const, status: "waiting" as const })) : []),
   ];
   const id = await ctx.db.insert("syncs", { accountId: account._id, reason, kind, attempts: 0, startedAt: now, steps });
 
@@ -474,6 +481,7 @@ async function runSync(ctx: ActionCtx, run: Doc<"syncs">, account: Doc<"accounts
   }
 
   if (run.steps.some(s => s.source === "connect")) await runConnect(ctx, account, run, markIn("connect"));
+  if (run.steps.some(s => s.source === "canvas")) await runCanvas(ctx, account, run, markIn("canvas"));
   await ctx.runMutation(internal.sync.finish, { runId: run._id });
 }
 
@@ -552,6 +560,46 @@ async function runConnect(ctx: ActionCtx, account: Doc<"accounts">, run: Doc<"sy
       await mark(key, signedIn || key === "signin" ? "failed" : "skipped", { note: r.message });
     }
   }
+}
+
+/**
+ * Canvas's steps: the courses, then each course's assignments, the grades worked out from them, then the courses'
+ * announcements. A step that fails on its own
+ * is marked and the rest carry on (a run picked up again reads the courses where the courses step kept them); a token
+ * Canvas refuses fails what is left, and lib/canvas.ts notes it on the account so later runs leave Canvas alone.
+ */
+async function runCanvas(ctx: ActionCtx, account: Doc<"accounts">, run: Doc<"syncs">, mark: Mark) {
+  const left = new Set(run.steps.filter(s => s.source === "canvas" && !isSettled(s.status)).map(s => s.key as CanvasKey));
+  if (!left.size) return;
+  // The courses as last kept: what a run picked up again starts from, and what the later steps use if the courses step
+  // fails this time (so a Canvas hiccup never reads as no courses, and wipes their announcements).
+  const kept = await ctx.runQuery(internal.cache.get, { accountId: account._id, store: "canvas", kind: "courses" });
+  let courses: CanvasCourse[] = (kept?.data as CanvasCourse[] | null) ?? [];
+  const STEPS: Record<CanvasKey, (s: CanvasSession) => Promise<Outcome>> = {
+    async courses(s) {
+      const r = await fetchCourses(ctx, account, s);
+      courses = r.courses;
+      return r.outcome;
+    },
+    work: s => fetchCanvasWork(ctx, account, s, courses),
+    /** Worked out from what the two steps before kept (canvas.ts keepGrades): no call to Canvas. */
+    grades: async () => ({ count: await ctx.runMutation(internal.canvas.keepGrades, { accountId: account._id }) }),
+    announcements: async s => (courses.length ? fetchCanvasAnnouncements(ctx, account, s, courses) : { count: 0, note: "No courses yet" }),
+  };
+  const r = await withCanvas(ctx, account, async s => {
+    for (const key of CANVAS_STEPS) {
+      if (!left.has(key)) continue;
+      await mark(key, "running");
+      try {
+        await mark(key, "done", await STEPS[key](s));
+      } catch (e) {
+        if (isNonRetryableError(e) || (e instanceof CanvasError && e.code === "bad-token")) throw e;
+        await mark(key, "failed", { note: failure(e) });
+      }
+      left.delete(key);
+    }
+  });
+  if (!r.ok) for (const key of CANVAS_STEPS) if (left.has(key)) await mark(key, "failed", { note: r.message });
 }
 
 // ---------- internals ----------

@@ -12,6 +12,8 @@ import { useSyncState } from "@/lib/neo/sync";
 import { useNow } from "@/lib/neo/time";
 import { syncLabel } from "@/features/sync/sync-button";
 import { ThemeSwitch } from "./theme-switch";
+import { CalendarFeed } from "./calendar-feed";
+import { CanvasLink } from "./canvas-link";
 
 /** The card's padding and its photo, in px (p-4, size-11), so the photo can land on the picture it grew from. */
 const CARD_PAD = 16;
@@ -169,6 +171,8 @@ export function Profile({ me, token, onSignOut }: { me: Me; token: string; onSig
                     <p className="min-w-0 flex-1 type-caption text-text-2">{syncLabel(synced, now)}</p>
                   </div>
                 </div>
+                <CanvasLink token={token} />
+                <CalendarFeed token={token} />
                 <ThemeSwitch className="mt-3" />
                 <div className="mt-2 flex gap-2">
                   <Button size="sm" variant="secondary" className="flex-1" onClick={sync}>

@@ -12,10 +12,13 @@ import { classTarget, type ClassTarget } from "./lib/target";
 import { addDays, schoolToday } from "./lib/days";
 import { accountFor, fetchDays } from "./timetable";
 import { readRow, sideOf, type Side } from "./cache";
+import type { CanvasModule } from "@compassneo/canvas";
+import { withCanvas } from "./lib/canvas";
 
 /**
- * A class's resources from both sides, as one tree each: Compass's Resources (the class's folders of files, links and
- * pages) and Connect's Learning Content (sections of files and links). Fetched when the class panel's Resources tab
+ * A class's resources from every side, as one tree each: Compass's Resources (the class's folders of files, links and
+ * pages), Connect's Learning Content (sections of files and links), and the modules of the class's Canvas course (its
+ * files, links, and pages and assignments that open on Canvas). Fetched when the class panel's Resources tab
  * opens (load), kept per class, and asked for again after FRESH.
  *
  * Files are links to Compass Neo's own file route (lib/links.ts), so they open with the account's session.
@@ -27,7 +30,7 @@ export type ResourceNode = {
   key: string;
   name: string;
   kind: "folder" | "file" | "link" | "page" | "submission" | "discussion";
-  source: "compass" | "connect";
+  source: "compass" | "connect" | "canvas";
   /** A file: Compass Neo's link to it. A link: where it goes (external). */
   href: string | null;
   external: boolean;
@@ -48,10 +51,62 @@ export type ClassResources = {
   connect: Side<ResourceNode[]>;
   /** The Connect class the content came from. */
   connectClass: { name: string; code: string | null } | null;
+  canvas: Side<ResourceNode[]>;
 };
 
 const compassKind = (id: number) => `resources:${id}`;
 const connectKind = (id: number) => `content:${id}`;
+const canvasKind = (courseId: string) => `modules:${courseId}`;
+
+/**
+ * The module items Compass Neo shows: files (opened through its file route) and everything that opens somewhere,
+ * outside links and Canvas's own pages, assignments, quizzes and discussions (opened on Canvas). Sub-headers are left out.
+ */
+const CANVAS_ITEMS = new Set(["File", "ExternalUrl", "Page", "Assignment", "Quiz", "Discussion", "ExternalTool"]);
+
+/** A course's modules as folders. A file opens through Compass Neo's file route; anything else opens on Canvas. */
+async function fromCanvas(accountId: Id<"accounts">, modules: CanvasModule[]): Promise<ResourceNode[]> {
+  const out: ResourceNode[] = [];
+  for (const m of modules) {
+    const children: ResourceNode[] = [];
+    for (const i of m.items) {
+      if (!CANVAS_ITEMS.has(i.type)) continue;
+      const file = i.type === "File" && i.fileId;
+      children.push({
+        key: `canvas:${i.id}`,
+        name: i.title,
+        kind: file ? "file" : "link",
+        source: "canvas",
+        href: file ? await fileLink(accountId, "canvas", `/api/v1/files/${i.fileId}`, i.title) : i.url,
+        external: !file,
+        fileName: file ? i.title : null,
+        mime: null,
+        size: null,
+        by: null,
+        at: null,
+        page: null,
+        children: [],
+      });
+    }
+    if (children.length) out.push({ ...folder(`canvas:module:${m.id}`, m.name), children });
+  }
+  return out;
+}
+
+const folder = (key: string, name: string): Omit<ResourceNode, "children"> => ({
+  key,
+  name,
+  kind: "folder",
+  source: "canvas",
+  href: null,
+  external: false,
+  fileName: null,
+  mime: null,
+  size: null,
+  by: null,
+  at: null,
+  page: null,
+});
 
 async function fromCompass(accountId: Id<"accounts">, nodes: CompassResource[]): Promise<ResourceNode[]> {
   const out: ResourceNode[] = [];
@@ -121,7 +176,12 @@ export const forClass = query({
       const side = sideOf(row, d => d as ContentNode[]);
       connect = side.status === "ready" ? { ...side, data: await fromConnect(account._id, side.data) } : side;
     }
-    return { compass, connect, connectClass: t.connect && { name: t.connect.name, code: t.connect.code } };
+    let canvas: Side<ResourceNode[]> = { status: "none" };
+    if (t.canvas) {
+      const side = sideOf(await readRow(ctx, account._id, "canvas", canvasKind(t.canvas.courseId)), d => d as CanvasModule[]);
+      canvas = side.status === "ready" ? { ...side, data: await fromCanvas(account._id, side.data) } : side;
+    }
+    return { compass, connect, connectClass: t.connect && { name: t.connect.name, code: t.connect.code }, canvas };
   },
 });
 
@@ -134,7 +194,7 @@ export const target = internalQuery({
 });
 
 /**
- * Fetches a class's resources from Compass and Connect, unless they were fetched in the last FRESH (force: the app's
+ * Fetches a class's resources from Compass, Connect and Canvas, unless they were fetched in the last FRESH (force: the app's
  * refresh). A class whose Compass id is not known yet (kept before it was) has the timetable fetched again first.
  */
 export const load = action({
@@ -145,7 +205,7 @@ export const load = action({
     let t = await ctx.runQuery(internal.resources.target, { accountId: account._id, code });
     if (!t) return { ok: false, code: "signed-out", message: "This device is signed out." };
     const now = Date.now();
-    const stale = async (store: "compass" | "connect", kind: string) => {
+    const stale = async (store: "compass" | "connect" | "canvas", kind: string) => {
       if (force) return true;
       const row = await ctx.runQuery(internal.cache.get, { accountId: account._id, store, kind });
       return !row || now - row.checkedAt > FRESH;
@@ -157,6 +217,10 @@ export const load = action({
       t = (await ctx.runQuery(internal.resources.target, { accountId: account._id, code })) ?? t;
     }
 
+    // A job that throws (the network failing, not an answer) is kept as its side's error, never left unhandled while
+    // the next side is being looked at.
+    const failed = (store: "compass" | "connect" | "canvas", kind: string) => (e: unknown) =>
+      ctx.runMutation(internal.cache.put, { accountId: account._id, store, kind, error: e instanceof Error && e.message ? e.message : "It did not answer." });
     const jobs: Array<Promise<unknown>> = [];
     if (t.activityId && (await stale("compass", compassKind(t.activityId)))) {
       const activityId = t.activityId;
@@ -168,7 +232,20 @@ export const load = action({
             kind: compassKind(activityId),
             ...(r.ok ? { data: r.value } : { error: r.message }),
           }),
-        ),
+        ).catch(failed("compass", compassKind(activityId))),
+      );
+    }
+    if (t.canvas && (await stale("canvas", canvasKind(t.canvas.courseId)))) {
+      const courseId = t.canvas.courseId;
+      jobs.push(
+        withCanvas(ctx, account, s => s.getModules(courseId)).then(r =>
+          ctx.runMutation(internal.cache.put, {
+            accountId: account._id,
+            store: "canvas",
+            kind: canvasKind(courseId),
+            ...(r.ok ? { data: r.value } : { error: r.message }),
+          }),
+        ).catch(failed("canvas", canvasKind(courseId))),
       );
     }
     if (t.connect && (await stale("connect", connectKind(t.connect.classId)))) {
@@ -181,7 +258,7 @@ export const load = action({
             kind: connectKind(classId),
             ...(r.ok ? { data: r.value } : { error: r.message }),
           }),
-        ),
+        ).catch(failed("connect", connectKind(classId))),
       );
     }
     await Promise.all(jobs);

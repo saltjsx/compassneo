@@ -77,7 +77,7 @@ const PLANS_SHOWN = 15;
 
 const isFolder = (n: Node) => n.kind === "folder";
 
-const folderOf = (key: string, name: string, source: Source, children: Node[]): Node => ({
+const folderOf = (key: string, name: string, source: Node["source"], children: Node[]): Node => ({
   key,
   name,
   kind: "folder",
@@ -155,7 +155,7 @@ function build(res: ClassResources | null | undefined, today: string): Lib {
       const children = strip(n.children);
       return children.length ? [{ ...n, children }] : [];
     });
-  const sideOf = (side: ResourceSide | undefined, source: Source): Node[] => {
+  const sideOf = (side: ResourceSide | undefined, source: Node["source"]): Node[] => {
     if (side?.status !== "ready") return [];
     const nodes = strip(side.data);
     const loose = nodes.filter(n => !isFolder(n));
@@ -164,6 +164,7 @@ function build(res: ClassResources | null | undefined, today: string): Lib {
   };
   const compass = sideOf(res?.compass, "compass");
   const connect = sideOf(res?.connect, "connect");
+  const canvas = sideOf(res?.canvas, "canvas");
 
   const index: Lib["index"] = new Map();
   const leaves: Leaf[] = [];
@@ -178,10 +179,9 @@ function build(res: ClassResources | null | undefined, today: string): Lib {
     return mine;
   };
   const sum = (nodes: Node[]) => nodes.reduce((a, n) => a + walk(n, []).length, 0);
-  const inCompass = sum(compass);
-  const inConnect = sum(connect);
   // The bigger library leads; each keeps its teacher's order.
-  const roots = inCompass >= inConnect ? [...compass, ...connect] : [...connect, ...compass];
+  const libraries = [compass, connect, canvas].map(nodes => ({ nodes, count: sum(nodes) })).sort((a, b) => b.count - a.count);
+  const roots = libraries.flatMap(l => l.nodes);
 
   const now = Date.now();
   const fresh = leaves
@@ -197,7 +197,7 @@ function build(res: ClassResources | null | undefined, today: string): Lib {
       .map(({ node, label }) => ({ node, label })),
     leaves,
     index,
-    both: inCompass > 0 && inConnect > 0,
+    both: libraries.filter(l => l.count > 0).length > 1,
     fresh,
   };
 }
@@ -272,7 +272,13 @@ export function FilesPage({
   const [picked, setPicked] = useState<Map<string, Leaf>>(() => new Map());
 
   if (data === null) return null;
-  const sides: Array<[Source, ResourceSide]> = data ? [["compass", data.compass], ["connect", data.connect]] : [];
+  const sides: Array<[Source, ResourceSide]> = data
+    ? [
+        ["compass", data.compass],
+        ["connect", data.connect],
+        ["canvas", data.canvas],
+      ]
+    : [];
   const ready = sides.filter(([, s]) => s.status === "ready");
   const waiting = !data || (!ready.length && sides.some(([, s]) => s.status === "missing"));
   const toggleLeaf = (l: Leaf) =>
@@ -323,7 +329,7 @@ export function FilesPage({
       </Tooltip>
     </div>
   );
-  const notes = <SideNotes sides={sides} what={{ compass: "resources", connect: "learning content" }} now={now} />;
+  const notes = <SideNotes sides={sides} what={{ compass: "resources", connect: "learning content", canvas: "files" }} now={now} />;
   const selectBar = selecting && (
     <div role="status" className="flex min-h-(--control) items-center gap-2 ps-1">
       <span className="min-w-0 flex-1 truncate type-label-sm text-text-2">{picked.size ? `${picked.size} picked` : "Pick files to download together"}</span>

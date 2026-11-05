@@ -174,7 +174,7 @@ button.neo-card:focus-visible { outline: var(--focus-width) solid var(--focus); 
 /* Room for a phone's notch and home bar. */
 .neo-safe-top { padding-top: max(env(safe-area-inset-top), 12px); }
 .neo-safe-bottom { padding-bottom: max(env(safe-area-inset-bottom), 18px); }
-.neo-profile-card { width: min(19rem, calc(100vw - 1.5rem)); }
+.neo-profile-card { width: min(19rem, calc(100vw - 1.5rem)); max-height: calc(100dvh - 1.5rem); overflow-y: auto; overscroll-behavior: contain; }
 
 
 @media (prefers-reduced-motion: reduce) {

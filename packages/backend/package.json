@@ -5,7 +5,8 @@
   "scripts": {
     "dev": "convex dev",
     "deploy": "convex deploy",
-    "typecheck": "tsc -p convex --noEmit"
+    "typecheck": "tsc -p convex --noEmit",
+    "test": "bun test"
   },
   "exports": {
     "./api": "./convex/_generated/api.js",
@@ -13,6 +14,7 @@
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^1.5.0",
+    "@compassneo/canvas": "workspace:*",
     "@compassneo/compass": "workspace:*",
     "@compassneo/connect": "workspace:*",
     "@convex-dev/workpool": "^0.4.15",
