@@ -12,7 +12,7 @@ import { InlineConfirm } from "./inline-confirm";
 const requireValue = (message: string) => (v: unknown) => (String(v ?? "").trim() ? null : message);
 
 /**
- * Canvas, in the profile card. Not added: a way to add it, which opens a short form (the school's Canvas address and
+ * Canvas, on the settings page. Not added: a way to add it, which opens a short form (the school's Canvas address and
  * an access token, with where to make one). Added: where and as whom, and a way to remove it, which asks first (adding
  * it back takes a new token). Canvas no longer taking the token: says so, with the form to paste a new one.
  */
@@ -80,11 +80,11 @@ export function CanvasLink({ token }: { token: string }) {
   );
 
   return (
-    <div className="mt-3 flex flex-col gap-2 border-t border-line-faint pt-3">
+    <section aria-labelledby="canvas-title" className="neo-stack neo-notice flex flex-col gap-3 p-4">
       <div className="flex items-start gap-2.5">
         <SourceMark source="canvas" size={14} className="mt-0.5" />
         <div className="min-w-0 flex-1">
-          <p className="type-label-sm text-text-1">Canvas</p>
+          <h2 id="canvas-title" className="type-label text-text-1">Canvas</h2>
           {!status.added ? (
             <p className="type-caption text-text-2">If your school uses Canvas too, add it to see its work beside Compass's.</p>
           ) : status.refused ? (
@@ -140,6 +140,6 @@ export function CanvasLink({ token }: { token: string }) {
           </div>
         </>
       )}
-    </div>
+    </section>
   );
 }

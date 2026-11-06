@@ -201,6 +201,7 @@ export default function Home() {
     await signOut();
   };
   const signInAgain = () => leave(`/login/${me.slug}`);
+  const openSettings = () => void morphRoute(() => navigate("/settings", { flushSync: true }), "settings");
 
   const swiped = (_: unknown, info: PanInfo) => {
     if (info.offset.x < -SWIPE_PX || info.velocity.x < -SWIPE_SPEED) move(1);
@@ -209,8 +210,9 @@ export default function Home() {
 
   return (
     <div data-route="home" className="min-h-dvh bg-page">
-      {/* The login route's code is fetched ahead, so signing out morphs without waiting on the network. */}
+      {/* The login and settings routes' code is fetched ahead, so going to either morphs without waiting on the network. */}
       <PrefetchPageLinks page="/login" />
+      <PrefetchPageLinks page="/settings" />
       <LayoutGroup>
         {/* On a wide screen the day moves aside for the class panel: the page's right padding springs to the panel's
             width as it slides in, on the same spring, so the day stays centred in what is left. */}
@@ -224,7 +226,7 @@ export default function Home() {
               <div className="ms-auto flex items-center gap-1.5">
                 <SupportButton />
                 <SyncButton token={token} />
-                <Profile me={me} token={token} onSignOut={() => void leave()} />
+                <Profile me={me} token={token} onSettings={openSettings} onSignOut={() => void leave()} />
               </div>
             </div>
           </header>

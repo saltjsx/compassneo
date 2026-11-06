@@ -16,7 +16,7 @@ const squash = (s: string) => s.toLowerCase().replace(/[^a-z0-9]/g, "");
 
 export const medianConfig = (ctx: ActionCtx) =>
   defineConfig({
-    plugins: [navigation({ routes: ["/", "/login"] })],
+    plugins: [navigation({ routes: ["/", "/settings", "/login"] })],
     tools: {
       accountStatus: {
         description:

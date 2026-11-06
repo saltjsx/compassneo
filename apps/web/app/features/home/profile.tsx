@@ -1,19 +1,14 @@
 import { useEffect, useRef, useState } from "react";
 import { AnimatePresence, motion } from "motion/react";
-import { useMutation } from "convex/react";
-import { api } from "@compassneo/backend/api";
 import { Button } from "@/components/glaze/ui/button";
-import { Icon, School, SignOut, Sync } from "@/components/glaze/icon";
+import { Icon, School, Settings, SignOut, Sync } from "@/components/glaze/icon";
 import { cn } from "@/lib/glaze/utils";
 import { focusIn, spring } from "@/lib/neo/motion";
 import { hostOf } from "@/lib/neo/schools";
-import { signOutNotice, type Me } from "@/lib/neo/session";
+import type { Me } from "@/lib/neo/session";
 import { useSyncState } from "@/lib/neo/sync";
 import { useNow } from "@/lib/neo/time";
 import { syncLabel } from "@/features/sync/sync-button";
-import { ThemeSwitch } from "./theme-switch";
-import { CalendarFeed } from "./calendar-feed";
-import { CanvasLink } from "./canvas-link";
 
 /** The card's padding and its photo, in px (p-4, size-11), so the photo can land on the picture it grew from. */
 const CARD_PAD = 16;
@@ -33,7 +28,7 @@ const initials = (name: string) =>
     .join("");
 
 /** The person: their Compass photo once a sync has copied it, else their initials on Neo blue. */
-function Face({
+export function Face({
   me,
   layoutId,
   radius = 999,
@@ -65,16 +60,15 @@ function Face({
 
 /**
  * The profile picture in the corner. Pressing it grows the circle into a card (they share a motion name), and who is
- * signed in, where, the last sync and the ways out come into focus inside it. Pressing outside, Escape or the photo
- * shrinks it back into the circle.
+ * signed in, where, the last sync and the ways on (settings, signing out) come into focus inside it. Pressing outside,
+ * Escape or the photo shrinks it back into the circle. Everything to change lives on the settings page, not here.
  */
-export function Profile({ me, token, onSignOut }: { me: Me; token: string; onSignOut: () => void }) {
+export function Profile({ me, token, onSettings, onSignOut }: { me: Me; token: string; onSettings: () => void; onSignOut: () => void }) {
   const [open, setOpen] = useState(false);
   const [at, setAt] = useState<{ top: number; right: number } | null>(null);
   const trigger = useRef<HTMLButtonElement>(null);
   const synced = useSyncState(token);
   const now = useNow();
-  const syncNow = useMutation(api.sync.now);
 
   // The card opens where the picture is: placed so the big photo inside it lands centred on the small one, and kept on
   // screen at the edges. Measured again if the window changes size while it is open.
@@ -106,14 +100,6 @@ export function Profile({ me, token, onSignOut }: { me: Me; token: string; onSig
   const shut = () => {
     setOpen(false);
     requestAnimationFrame(() => trigger.current?.focus({ preventScroll: true }));
-  };
-
-  const sync = () => {
-    void syncNow({ token, force: true })
-      .then(r => {
-        if (!r.ok && (r.code === "signed-out" || r.code === "password-changed")) signOutNotice.set(r.message);
-      })
-      .catch(() => {});
   };
 
   return (
@@ -171,13 +157,10 @@ export function Profile({ me, token, onSignOut }: { me: Me; token: string; onSig
                     <p className="min-w-0 flex-1 type-caption text-text-2">{syncLabel(synced, now)}</p>
                   </div>
                 </div>
-                <CanvasLink token={token} />
-                <CalendarFeed token={token} />
-                <ThemeSwitch className="mt-3" />
-                <div className="mt-2 flex gap-2">
-                  <Button size="sm" variant="secondary" className="flex-1" onClick={sync}>
-                    <Icon icon={Sync} />
-                    Sync now
+                <div className="mt-3 flex gap-2">
+                  <Button size="sm" variant="secondary" className="flex-1" onClick={onSettings}>
+                    <Icon icon={Settings} />
+                    Settings
                   </Button>
                   <Button size="sm" variant="secondary" className="flex-1" onClick={onSignOut}>
                     <Icon icon={SignOut} />

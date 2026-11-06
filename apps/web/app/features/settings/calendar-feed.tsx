@@ -7,7 +7,7 @@ import { signOutNotice } from "@/lib/neo/session";
 import { InlineConfirm } from "./inline-confirm";
 
 /**
- * The calendar feed, in the profile card: off, a way to turn it on; on, a way to add it to the device's calendar
+ * The calendar feed, on the settings page: off, a way to turn it on; on, a way to add it to the device's calendar
  * (webcal://, which a phone's calendar subscribes to), the link to paste elsewhere, and a way to turn it off (which ends
  * the link, so it asks first; turning it on again makes a new one).
  */
@@ -42,11 +42,11 @@ export function CalendarFeed({ token }: { token: string }) {
   };
 
   return (
-    <div className="mt-3 flex flex-col gap-2 border-t border-line-faint pt-3">
+    <section aria-labelledby="calendar-title" className="neo-stack neo-notice flex flex-col gap-3 p-4">
       <div className="flex items-start gap-2.5">
         <Icon icon={Calendar} className="mt-0.5 text-text-2" />
         <div className="min-w-0 flex-1">
-          <p className="type-label-sm text-text-1">Calendar</p>
+          <h2 id="calendar-title" className="type-label text-text-1">Calendar</h2>
           <p className="type-caption text-text-2">
             {link.url
               ? "A link for your calendar app to subscribe to, with your timetable, assemblies and due dates."
@@ -88,6 +88,6 @@ export function CalendarFeed({ token }: { token: string }) {
           Get a calendar link
         </Button>
       )}
-    </div>
+    </section>
   );
 }

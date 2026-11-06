@@ -16,7 +16,7 @@ import { SchoolStep } from "./school-step";
 import { AddressStep, type AddressHint } from "./address-step";
 import { CredentialsStep } from "./credentials-step";
 import { CheckingStep } from "./checking-step";
-import { ThemeToggle } from "@/features/home/theme-switch";
+import { ThemeToggle } from "@/features/settings/theme-switch";
 
 type Step =
   | { kind: "school" }
