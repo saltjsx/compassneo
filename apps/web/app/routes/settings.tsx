@@ -11,6 +11,7 @@ import { Account } from "@/features/settings/account";
 import { ThemeSwitch } from "@/features/settings/theme-switch";
 import { CanvasLink } from "@/features/settings/canvas-link";
 import { CalendarFeed } from "@/features/settings/calendar-feed";
+import { AiAccess } from "@/features/settings/ai-access";
 
 export function meta({}: Route.MetaArgs) {
   return [{ title: "Settings · Compass Neo" }];
@@ -18,7 +19,7 @@ export function meta({}: Route.MetaArgs) {
 
 /**
  * Settings, a page of its own (the profile card in the corner only says who and where now): the account and its sync,
- * the theme, Canvas and the calendar link, one card each. The arrow at the top, or Escape, goes back to the day.
+ * the theme, Canvas, the calendar link and AI access, one card each. The arrow at the top, or Escape, goes back to the day.
  */
 export default function Settings() {
   const session = useSession();
@@ -86,6 +87,7 @@ export default function Settings() {
 
         <CanvasLink token={token} />
         <CalendarFeed token={token} />
+        <AiAccess token={token} />
       </main>
     </div>
   );

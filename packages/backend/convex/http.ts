@@ -9,6 +9,7 @@ import { readLink } from "./lib/links";
 import { readCalendarLink } from "./calendar";
 import { median } from "@mediansh/agent-tools";
 import { medianConfig } from "./lib/median";
+import { handle as mcpRoute } from "./mcp";
 
 /**
  * GET /file/<link>/<name>: a file from Compass, Connect or Canvas, fetched with the account's session or token (lib/links.ts says which
@@ -126,4 +127,9 @@ http.route({ pathPrefix: "/file/", method: "GET", handler: fileRoute });
 http.route({ pathPrefix: "/calendar/", method: "GET", handler: calendarRoute });
 http.route({ path: "/api/median", method: "GET", handler: medianRoute });
 http.route({ path: "/api/median", method: "POST", handler: medianRoute });
+// AI access (mcp.ts): the link in the address, or as a bearer token at /mcp.
+for (const method of ["POST", "GET", "DELETE", "OPTIONS"] as const) {
+  http.route({ pathPrefix: "/mcp/", method, handler: mcpRoute });
+  http.route({ path: "/mcp", method, handler: mcpRoute });
+}
 export default http;

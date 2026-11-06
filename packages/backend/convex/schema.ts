@@ -62,6 +62,8 @@ export default defineSchema({
      * asks for a link; a new one ends the old link.
      */
     calendarNonce: v.optional(v.string()),
+    /** AI access (mcp.ts): the random value the account's AI link is signed over, as calendarNonce is. Unset while off. */
+    mcpNonce: v.optional(v.string()),
     /**
      * The background scheduler's turn used to live here; it is in accountState now. Unset until the scheduler first
      * sees the account, -1 once its turn is kept there (sync.ts tick). sealedCompass, compassAt, sealedConnect and

@@ -106,7 +106,7 @@ export const get = query({
 export const load = action({
   args: { token: v.string() },
   handler: async (ctx, { token }): Promise<{ ok: true } | Problem> => {
-    const account = await deviceAccount(ctx, token);
+    const account = await deviceAccount(ctx, token, { reader: true });
     if (!account) return { ok: false, code: "signed-out", message: "This device is signed out." };
     const r = await withCompass(ctx, account, s => fetchEvents(ctx, account, s));
     return r.ok ? { ok: true } : r;

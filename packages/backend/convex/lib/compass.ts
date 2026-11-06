@@ -3,6 +3,7 @@ import type { Doc } from "../_generated/dataModel";
 import { internal } from "../_generated/api";
 import { CompassError, CompassSession, signIn, type Cookies } from "@compassneo/compass";
 import { hashToken, seal, unseal } from "./crypto";
+import { isAgentToken } from "./agent";
 
 export type Login = { username: string; password: string };
 
@@ -15,7 +16,12 @@ export type Problem =
 
 export type Result<T> = { ok: true; value: T } | Problem;
 
-export async function deviceAccount(ctx: ActionCtx, token: string) {
+/**
+ * The account a device's token is for, noting the device as used. An AI's link (lib/agent.ts) is taken only by an
+ * action that asks for a reader: one that fetches what a page shows, and changes nothing a student did.
+ */
+export async function deviceAccount(ctx: ActionCtx, token: string, opts?: { reader?: boolean }) {
+  if (isAgentToken(token)) return opts?.reader ? ctx.runQuery(internal.mcp.accountOf, { token }) : null;
   const found = await ctx.runQuery(internal.accounts.byTokenHash, { tokenHash: await hashToken(token) });
   if (found) await ctx.runMutation(internal.accounts.touch, { sessionId: found.session._id });
   return found?.account ?? null;

@@ -80,7 +80,7 @@ export const save = internalMutation({
 export const load = action({
   args: { token: v.string(), ids: v.array(v.string()) },
   handler: async (ctx, { token, ids }): Promise<{ ok: true; fetched: number } | Problem> => {
-    const account = await deviceAccount(ctx, token);
+    const account = await deviceAccount(ctx, token, { reader: true });
     if (!account) return { ok: false, code: "signed-out", message: "This device is signed out." };
     const wanted = [...new Set(ids.filter(id => /^[\w-]{6,80}$/.test(id)))];
     const due: string[] = await ctx.runQuery(internal.plans.due, { accountId: account._id, ids: wanted });

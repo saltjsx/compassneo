@@ -218,7 +218,7 @@ export const target = internalQuery({
 export const load = action({
   args: { token: v.string(), code: v.string(), force: v.optional(v.boolean()) },
   handler: async (ctx, { token, code, force }): Promise<{ ok: true } | Problem> => {
-    const account = await deviceAccount(ctx, token);
+    const account = await deviceAccount(ctx, token, { reader: true });
     if (!account) return { ok: false, code: "signed-out", message: "This device is signed out." };
     let t = await ctx.runQuery(internal.resources.target, { accountId: account._id, code });
     if (!t) return { ok: false, code: "signed-out", message: "This device is signed out." };

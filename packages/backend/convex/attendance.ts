@@ -223,7 +223,7 @@ function daysOf(rolls: KeptRoll[], slug: string, known: StoredClass[]) {
 export const load = action({
   args: { token: v.string() },
   handler: async (ctx, { token }): Promise<{ ok: true } | Problem> => {
-    const account = await deviceAccount(ctx, token);
+    const account = await deviceAccount(ctx, token, { reader: true });
     if (!account) return { ok: false, code: "signed-out", message: "This device is signed out." };
     const jobs: Array<Promise<unknown>> = [withCompass(ctx, account, s => fetchCompassAttendance(ctx, account, s))];
     if (isWA(account.slug) && account.sealedLogin) {

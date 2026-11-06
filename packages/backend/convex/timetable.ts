@@ -5,6 +5,7 @@ import type { Doc, Id } from "./_generated/dataModel";
 import { getCalendarEvents, type CompassSession } from "@compassneo/compass";
 import { percentOf, scoreOf, type ConnectNotice, type SubjectGrade } from "@compassneo/connect";
 import { hashToken } from "./lib/crypto";
+import { isAgentToken, readAgentToken } from "./lib/agent";
 import { same } from "./lib/same";
 import { deviceAccount, withCompass, type Problem } from "./lib/compass";
 import { addDays, dayOf, daysBetween, isDay, schoolToday } from "./lib/days";
@@ -158,7 +159,7 @@ export const load = action({
   args: { token: v.string(), day: v.string() },
   handler: async (ctx, { token, day }): Promise<{ ok: true } | Problem> => {
     if (!isDay(day)) return { ok: false, code: "unavailable", message: "That is not a day." };
-    const account = await deviceAccount(ctx, token);
+    const account = await deviceAccount(ctx, token, { reader: true });
     if (!account) return { ok: false, code: "signed-out", message: "This device is signed out." };
     const today = schoolToday(account.slug);
     if (day < addDays(today, -365) || day > addDays(today, 365)) return { ok: false, code: "unavailable", message: "Compass Neo shows a year either way." };
@@ -169,7 +170,12 @@ export const load = action({
 
 // ---------- reading ----------
 
+/**
+ * The account a device's token is for. An AI's link (lib/agent.ts) is taken too, but only by a query: it reads
+ * everything a page does and changes nothing, so a mutation (whose db can insert) is never handed its account.
+ */
 export async function accountFor(ctx: QueryCtx, token: string) {
+  if (isAgentToken(token)) return "insert" in ctx.db ? null : readAgentToken(ctx, token);
   const tokenHash = await hashToken(token);
   const session = await ctx.db.query("sessions").withIndex("by_token", i => i.eq("tokenHash", tokenHash)).first();
   return session && ctx.db.get(session.accountId);
