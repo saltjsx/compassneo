@@ -11,6 +11,7 @@
         "@base-ui/react": "^1.8.0",
         "@compassneo/backend": "workspace:*",
         "@compassneo/brand": "workspace:*",
+        "@compassneo/canvas": "workspace:*",
         "@compassneo/compass": "workspace:*",
         "@fontsource-variable/geist": "^5.3.0",
         "@fontsource-variable/geist-mono": "^5.3.0",

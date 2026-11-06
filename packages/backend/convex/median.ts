@@ -102,3 +102,28 @@ export const classes = internalQuery({
     return stored.filter(c => c.lastSeen >= since).map(c => ({ code: c.code, name: shortName(c.subject, c.code), subject: subjectName(c.subject, c.code) }));
   },
 });
+
+/**
+ * The account's Canvas: whether the student has added it, where, whether Canvas still takes their token, and when its
+ * courses last came in. Never the token, nor anything from the courses.
+ */
+export const canvas = internalQuery({
+  args: { key: v.string() },
+  handler: async (ctx, { key }) => {
+    const a = await byKey(ctx, key);
+    if (!a) return null;
+    if (!a.sealedCanvas || !a.canvasOrigin) return { added: false as const };
+    const courses = await ctx.db
+      .query("canvasCache")
+      .withIndex("by_account_kind", i => i.eq("accountId", a._id).eq("kind", "courses"))
+      .unique();
+    return {
+      added: true as const,
+      address: new URL(a.canvasOrigin).host,
+      tokenRefused: !!a.canvasRefused,
+      refusedReason: a.canvasRefused ?? null,
+      courses: Array.isArray(courses?.data) ? courses.data.length : null,
+      lastSyncedAt: courses?.fetchedAt ? new Date(courses.fetchedAt).toISOString() : null,
+    };
+  },
+});

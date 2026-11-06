@@ -180,6 +180,16 @@ files and announcements. A student adds it from the profile card with the school
 (Account, Settings, New access token). `canvas.add` checks both with Canvas itself (`/users/self`) and keeps the token
 sealed under `CREDENTIALS_KEY`, beside the Compass login.
 
+**Adding it.** The form in Settings walks a student through making the token: the address (the one in their browser bar
+on Canvas), the steps in Canvas, a button straight to their own Canvas settings page (`/profile/settings`, built from
+the address as they type it), and what it means when there is no New Access Token button (the school has turned tokens
+off). Stuck, they press Ask for help: the help chat opens, and the agent hears that they are adding Canvas with their
+first message (Median's `appState`). The agent has three tools for it (`convex/lib/median.ts`): `canvasStatus` (added or
+not, where, whether Canvas still takes the token, never the token itself), `canvasSetup` (the steps, the link to their
+settings page, and the usual problems with their fixes) and `openCanvasSetup` (Settings with the form open and in view,
+by `?add=canvas`). The page and the agent read the same steps from `packages/canvas/src/help.ts`, so they never drift
+apart.
+
 **Why a token.** Every school puts its own sign-on in front of Canvas: Microsoft, Google, or an identity service of its
 own, often with a second step. Each is a different flow, and replaying one without a browser means storing the
 student's school password for a site that is not Compass, and breaking whenever the school changes its sign-on. An

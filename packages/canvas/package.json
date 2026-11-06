@@ -4,7 +4,8 @@
   "type": "module",
   "description": "Fetch-only, read-only client for Canvas LMS (courses, assignments with the student's submission, announcements, files). Signs in with the student's own access token, which works the same at every school, whatever sign-on it puts in front of Canvas.",
   "exports": {
-    ".": "./src/index.ts"
+    ".": "./src/index.ts",
+    "./help": "./src/help.ts"
   },
   "scripts": {
     "typecheck": "tsc --noEmit -p .",

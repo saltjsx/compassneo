@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, useSyncExternalStore } from "react";
 import { useNavigate } from "react-router";
 import { useAction } from "convex/react";
 import { motion } from "motion/react";
@@ -11,6 +11,29 @@ import { spring } from "@/lib/neo/motion";
 import { useSession } from "@/lib/neo/session";
 
 const KEY = import.meta.env.VITE_MEDIAN_PUBLIC_KEY as string | undefined;
+
+/** Whether the help chat is on this build (it needs Median's public key). */
+export const helpAvailable = !!KEY;
+
+/**
+ * What the student opened help about, from a button beside the thing ("adding Canvas"), told to the agent with their
+ * next message (appState), so it can start there instead of asking. Kept until the page reloads.
+ */
+let topic: string | null = null;
+const listeners = new Set<() => void>();
+const useTopic = () =>
+  useSyncExternalStore(
+    l => (listeners.add(l), () => listeners.delete(l)),
+    () => topic,
+    () => null,
+  );
+
+/** Opens the help chat about something: the agent hears the topic with the student's first message. */
+export function askForHelp(about: string) {
+  topic = about;
+  listeners.forEach(l => l());
+  medianSupport.open();
+}
 
 /**
  * Median's support agent (median.sh), with the team behind it. No launcher of its own: it stays out of sight until
@@ -28,6 +51,7 @@ export function Support() {
   const identity = useAction(api.median.identity);
   const [signed, setSigned] = useState<{ token: string; user: MedianUser } | null>(null);
   const had = useRef(token);
+  const about = useTopic();
 
   useEffect(() => {
     if (had.current && !token) medianSupport.reset();
@@ -45,7 +69,15 @@ export function Support() {
   if (!KEY) return null;
   // Until the signature arrives, the name is shown (unverified, display only); the id joins once it is signed.
   const user = signed && signed.token === token ? signed.user : me ? { name: me.fullName ?? me.displayName } : undefined;
-  return <MedianSupport apiKey={KEY} launcher="hidden" user={user} onNavigate={path => navigate(path)} />;
+  return (
+    <MedianSupport
+      apiKey={KEY}
+      launcher="hidden"
+      user={user}
+      appState={about ? { helpingWith: about } : undefined}
+      onNavigate={path => navigate(path)}
+    />
+  );
 }
 
 /** The help button in the top bar, beside the sync gauge: opens and closes support, and reads as pressed while it is open. */
