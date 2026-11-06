@@ -14,6 +14,10 @@ import { hashToken } from "./lib/crypto";
  *   sealedCanvas   the student's Canvas access token (CREDENTIALS_KEY), when they have added Canvas
  * Each is bound to the account's key, so it opens only on its own row.
  *
+ * The cookies Compass and Connect rotate, and the scheduler's next turn, change on nearly every sync, and every query
+ * reads the account row, so a write to it runs every open query again. Those land in accountState instead (stateOf,
+ * setState): the row keeps what the sign-in left, and `live` lays the newer state over it for the sync's actions.
+ *
  * Sessions are devices: a token hash pointing at an account. When the last device signs out, the account and its
  * stored login are deleted.
  *
@@ -37,14 +41,44 @@ export const byTokenHash = internalQuery({
     const session = await ctx.db.query("sessions").withIndex("by_token", i => i.eq("tokenHash", tokenHash)).first();
     if (!session) return null;
     const account = await ctx.db.get(session.accountId);
-    return account ? { session, account } : null;
+    return account ? { session, account: await live(ctx, account) } : null;
   },
 });
 
 export const byId = internalQuery({
   args: { accountId: v.id("accounts") },
-  handler: (ctx, { accountId }) => ctx.db.get(accountId),
+  handler: async (ctx, { accountId }) => {
+    const account = await ctx.db.get(accountId);
+    return account && live(ctx, account);
+  },
 });
+
+// ---------- state: what changes on nearly every sync ----------
+
+type State = Pick<Doc<"accountState">, "sealedCompass" | "compassAt" | "sealedConnect" | "connectAt" | "nextSyncAt">;
+
+export const stateOf = (ctx: QueryCtx, accountId: Id<"accounts">) =>
+  ctx.db.query("accountState").withIndex("by_account", i => i.eq("accountId", accountId)).unique();
+
+/** Writes some of an account's state, making its row if it has none. Only the sync's actions and the scheduler read it. */
+export async function setState(ctx: MutationCtx, accountId: Id<"accounts">, fields: Partial<State>) {
+  const row = await stateOf(ctx, accountId);
+  if (row) await ctx.db.patch(row._id, fields);
+  else await ctx.db.insert("accountState", { accountId, ...fields });
+}
+
+/** The account as the sync's actions need it: its row, with the newer cookies from its state laid over. */
+export async function live(ctx: QueryCtx, account: Doc<"accounts">): Promise<Doc<"accounts">> {
+  const s = await stateOf(ctx, account._id);
+  if (!s) return account;
+  return {
+    ...account,
+    sealedCompass: s.sealedCompass ?? account.sealedCompass,
+    compassAt: s.compassAt ?? account.compassAt,
+    sealedConnect: s.sealedConnect ?? account.sealedConnect,
+    connectAt: s.connectAt ?? account.connectAt,
+  };
+}
 
 /** A successful sign-in: the account is created or refreshed with the new login and cookies, and a device added. */
 export const signedIn = internalMutation({
@@ -67,6 +101,11 @@ export const signedIn = internalMutation({
     const accountId = existing
       ? (await ctx.db.patch(existing._id, { ...fields, compassAt: now, updatedAt: now }), existing._id)
       : await ctx.db.insert("accounts", { ...fields, compassAt: now, createdAt: now, updatedAt: now });
+    // The sign-in's cookies are the newest: they replace any the state kept from before.
+    if (existing) {
+      const state = await stateOf(ctx, accountId);
+      if (state?.sealedCompass) await ctx.db.patch(state._id, { sealedCompass: fields.sealedCompass, compassAt: now });
+    }
     await ctx.db.insert("sessions", { tokenHash, accountId, createdAt: now, lastSeenAt: now });
     const school = await ctx.db.query("schools").withIndex("by_slug", i => i.eq("slug", fields.slug)).unique();
     if (school) await ctx.db.patch(school._id, { signIns: school.signIns + 1 });
@@ -78,7 +117,7 @@ export const saveCompass = internalMutation({
   args: { accountId: v.id("accounts"), sealedCompass: v.string(), fresh: v.boolean() },
   handler: async (ctx, { accountId, sealedCompass, fresh }) => {
     if (!(await ctx.db.get(accountId))) return;
-    await ctx.db.patch(accountId, { sealedCompass, ...(fresh ? { compassAt: Date.now() } : {}), updatedAt: Date.now() });
+    await setState(ctx, accountId, { sealedCompass, ...(fresh ? { compassAt: Date.now() } : {}) });
   },
 });
 
@@ -99,20 +138,19 @@ export const saveProfile = internalMutation({
       return;
     }
     if (profile.photoId && account.photoId && account.photoId !== profile.photoId) await ctx.storage.delete(account.photoId);
-    await ctx.db.patch(accountId, { ...profile, updatedAt: Date.now() });
+    // Most syncs bring the same name and form: then the row (which every query reads) is left alone.
+    const changed = (Object.keys(profile) as Array<keyof typeof profile>).filter(k => profile[k] !== undefined && profile[k] !== account[k]);
+    if (changed.length) await ctx.db.patch(accountId, { ...profile, updatedAt: Date.now() });
   },
 });
 
 export const saveConnect = internalMutation({
   args: { accountId: v.id("accounts"), sealedConnect: v.string(), connectStudentId: v.optional(v.number()), fresh: v.boolean() },
   handler: async (ctx, { accountId, sealedConnect, connectStudentId, fresh }) => {
-    if (!(await ctx.db.get(accountId))) return;
-    await ctx.db.patch(accountId, {
-      sealedConnect,
-      ...(connectStudentId != null ? { connectStudentId } : {}),
-      ...(fresh ? { connectAt: Date.now() } : {}),
-      updatedAt: Date.now(),
-    });
+    const account = await ctx.db.get(accountId);
+    if (!account) return;
+    await setState(ctx, accountId, { sealedConnect, ...(fresh ? { connectAt: Date.now() } : {}) });
+    if (connectStudentId != null && connectStudentId !== account.connectStudentId) await ctx.db.patch(accountId, { connectStudentId, updatedAt: Date.now() });
   },
 });
 
@@ -147,6 +185,8 @@ export async function forgetAccount(ctx: MutationCtx, account: Doc<"accounts">, 
   for (const r of await ctx.db.query("syncs").withIndex("by_account", i => i.eq("accountId", account._id)).collect()) {
     await ctx.db.delete(r._id);
   }
+  const state = await stateOf(ctx, account._id);
+  if (state) await ctx.db.delete(state._id);
   if (account.photoId) await ctx.storage.delete(account.photoId);
   await ctx.db.delete(account._id);
 }

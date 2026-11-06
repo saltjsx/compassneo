@@ -39,6 +39,7 @@ import type * as lib_links from "../lib/links.js";
 import type * as lib_match from "../lib/match.js";
 import type * as lib_median from "../lib/median.js";
 import type * as lib_plan from "../lib/plan.js";
+import type * as lib_same from "../lib/same.js";
 import type * as lib_target from "../lib/target.js";
 import type * as median from "../median.js";
 import type * as overview from "../overview.js";
@@ -89,6 +90,7 @@ declare const fullApi: ApiFromModules<{
   "lib/match": typeof lib_match;
   "lib/median": typeof lib_median;
   "lib/plan": typeof lib_plan;
+  "lib/same": typeof lib_same;
   "lib/target": typeof lib_target;
   median: typeof median;
   overview: typeof overview;

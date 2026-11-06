@@ -428,7 +428,10 @@ export const load = action({
     // Each side on its own: one that throws (the network failing) never stops the others, or goes unhandled while the
     // next side is looked at.
     const quiet = (p: Promise<unknown>) => p.catch(() => {});
-    if (force || (await age("compass", "taskdetail")) > FRESH) jobs.push(quiet(withCompass(ctx, account, s => syncTasks(ctx, account, s))));
+    // Compass's tasks are fresh when the row moved lately or a sync's tasks step came back lately (a row that came back
+    // the same is not stamped again: lib/same.ts).
+    const tasksChecked = await ctx.runQuery(internal.sync.checkedAt, { accountId: account._id, step: "compass:tasks" });
+    if (force || Math.min(await age("compass", "taskdetail"), now - tasksChecked) > FRESH) jobs.push(quiet(withCompass(ctx, account, s => syncTasks(ctx, account, s))));
     if (t.connect && (force || (await age("connect", connectKind(t.connect.classId))) > FRESH)) jobs.push(quiet(fetchConnect(ctx, account, t.connect.classId)));
     const courseId = await ctx.runQuery(internal.work.canvasCourseOf, { accountId: account._id, code });
     if (courseId && (force || (await age("canvas", canvasWorkKind(courseId))) > FRESH)) {

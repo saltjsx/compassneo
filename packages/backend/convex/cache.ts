@@ -1,6 +1,7 @@
 import { v } from "convex/values";
 import { internalMutation, internalQuery, type QueryCtx } from "./_generated/server";
 import type { Id } from "./_generated/dataModel";
+import { same, STAMP_EVERY } from "./lib/same";
 
 /**
  * Rows of what Compass, Connect and Canvas last said, by kind ("resources:25860", "attendance", ...), for the modules
@@ -36,7 +37,10 @@ export const get = internalQuery({
   handler: (ctx, { accountId, store, kind }) => readRow(ctx, accountId, store, kind),
 });
 
-/** Keeps data (replacing the last), or an error beside the last good data. Writes nothing when nothing changed. */
+/**
+ * Keeps data (replacing the last), or an error beside the last good data. Writes nothing when nothing changed, not even
+ * the time, unless it is over STAMP_EVERY old (lib/same.ts): a write runs every query reading the row again.
+ */
 export const put = internalMutation({
   args: { accountId: v.id("accounts"), store: storeV, kind: v.string(), data: v.optional(v.any()), error: v.optional(v.string()) },
   handler: async (ctx, { accountId, store, kind, data, error }) => {
@@ -45,20 +49,24 @@ export const put = internalMutation({
     if (store === "compass") {
       const err = await ctx.db.query("compassCache").withIndex("by_account_kind", i => i.eq("accountId", accountId).eq("kind", errorKind(kind))).unique();
       if (data === undefined) {
-        if (err) await ctx.db.patch(err._id, { data: { message: error ?? "Compass did not answer." }, fetchedAt: now });
-        else await ctx.db.insert("compassCache", { accountId, kind: errorKind(kind), data: { message: error ?? "Compass did not answer." }, fetchedAt: now });
+        const message = error ?? "Compass did not answer.";
+        if (!err) await ctx.db.insert("compassCache", { accountId, kind: errorKind(kind), data: { message }, fetchedAt: now });
+        else if (!same(err.data, { message }) || now - err.fetchedAt > STAMP_EVERY) await ctx.db.patch(err._id, { data: { message }, fetchedAt: now });
         return;
       }
       if (err) await ctx.db.delete(err._id);
       const row = await ctx.db.query("compassCache").withIndex("by_account_kind", i => i.eq("accountId", accountId).eq("kind", kind)).unique();
       if (!row) await ctx.db.insert("compassCache", { accountId, kind, data, fetchedAt: now });
-      else await ctx.db.patch(row._id, JSON.stringify(row.data) === JSON.stringify(data) ? { fetchedAt: now } : { data, fetchedAt: now });
+      else if (!same(row.data, data)) await ctx.db.patch(row._id, { data, fetchedAt: now });
+      else if (now - row.fetchedAt > STAMP_EVERY) await ctx.db.patch(row._id, { fetchedAt: now });
       return;
     }
     const row = await ctx.db.query(TABLE[store]).withIndex("by_account_kind", i => i.eq("accountId", accountId).eq("kind", kind)).unique();
     const next = data !== undefined ? { data, error: undefined, fetchedAt: now, checkedAt: now } : { error, checkedAt: now };
-    if (row) await ctx.db.patch(row._id, next);
-    else await ctx.db.insert(TABLE[store], { accountId, kind, ...next });
+    if (!row) return void (await ctx.db.insert(TABLE[store], { accountId, kind, ...next }));
+    const unchanged = data !== undefined ? row.error === undefined && same(row.data, data) : row.error === error;
+    if (!unchanged) await ctx.db.patch(row._id, next);
+    else if (now - row.checkedAt > STAMP_EVERY) await ctx.db.patch(row._id, data !== undefined ? { fetchedAt: now, checkedAt: now } : { checkedAt: now });
   },
 });
 

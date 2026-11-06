@@ -1,5 +1,5 @@
 import { v } from "convex/values";
-import { internalAction, internalMutation, mutation, query, type ActionCtx, type MutationCtx } from "./_generated/server";
+import { internalAction, internalMutation, internalQuery, mutation, query, type ActionCtx, type MutationCtx } from "./_generated/server";
 import { internal } from "./_generated/api";
 import type { DataModel, Doc, Id } from "./_generated/dataModel";
 import { isNonRetryableError, NonRetryableError, type WorkId } from "@convex-dev/workpool";
@@ -16,7 +16,8 @@ import { fetchCompassAttendance, fetchConnectAttendance } from "./attendance";
 import { fetchEvents } from "./events";
 import { fetchChronicle } from "./chronicle";
 import { fetchNews } from "./announcements";
-import { farewellFor } from "./accounts";
+import { farewellFor, live, setState } from "./accounts";
+import { same, STAMP_EVERY } from "./lib/same";
 import { backgroundPool, poolFor, syncPool } from "./pools";
 import { CanvasError, type CanvasCourse, type CanvasSession } from "@compassneo/canvas";
 import { hasCanvas, withCanvas } from "./lib/canvas";
@@ -45,7 +46,9 @@ import { fetchAnnouncements as fetchCanvasAnnouncements, fetchCourses, fetchWork
  *   an open tab           the same, about once a minute while it is in front of someone (lib/neo/sync.ts)
  *   background            a full run every quarter hour (hourly once no device has opened the app in three days),
  *                         each account at its own minute in the quarter so the load stays even (`tick`)
- * Quiet runs (an open tab's, the background's) never show as syncing; they only move "Synced 2 minutes ago" on.
+ * Quiet runs (an open tab's, the background's) never show as syncing; they only move "Synced 2 minutes ago" on. Nobody
+ * watches their steps go, so they are written once per source as it ends, not as each starts and ends: every write to
+ * the run runs `latest` again on every open device.
  */
 
 const SECOND = 1000;
@@ -106,7 +109,20 @@ const isSettled = (s: Status) => s === "done" || s === "failed" || s === "skippe
 const isFull = (r: Doc<"syncs">) => !!r.finishedAt && (r.kind ?? "full") === "full";
 
 export type SyncRun = Pick<Doc<"syncs">, "_id" | "reason" | "kind" | "watched" | "startedAt" | "aliveAt" | "finishedAt" | "steps">;
-export type SyncState = { watched: SyncRun | null; last: SyncRun | null };
+/** checked: when each step ("compass:grades", "connect:notices", ...) last came back done, in the runs kept. */
+export type SyncState = { watched: SyncRun | null; last: SyncRun | null; checked: Record<string, number> };
+
+/** When each step last came back done, over the runs given. */
+function checkedIn(runs: Doc<"syncs">[]) {
+  const checked: Record<string, number> = {};
+  for (const r of runs) {
+    for (const s of r.steps) {
+      const k = `${s.source}:${s.key}`;
+      if (s.status === "done" && s.at && s.at > (checked[k] ?? 0)) checked[k] = s.at;
+    }
+  }
+  return checked;
+}
 
 const shown = (r: Doc<"syncs">): SyncRun => ({
   _id: r._id,
@@ -124,6 +140,8 @@ const shown = (r: Doc<"syncs">): SyncRun => ({
  *   watched  the latest run someone is watching (a sign-in, opening the app, "Sync now"), finished or not: the login's
  *            gauge follows it, and the corner gauge moves while it runs
  *   last     the latest run to finish, of any kind: what the corner gauge shows at rest, and when it last synced
+ *   checked  when each step last came back done: how fresh each page is, though a row that came back the same was
+ *            not written (lib/same.ts)
  */
 export const latest = query({
   args: { token: v.union(v.string(), v.null()) },
@@ -139,7 +157,7 @@ export const latest = query({
       .take(KEEP_RUNS + 2);
     const watched = runs.find(loud);
     const last = runs.find(r => r.finishedAt);
-    return { watched: watched ? shown(watched) : null, last: last ? shown(last) : null };
+    return { watched: watched ? shown(watched) : null, last: last ? shown(last) : null, checked: checkedIn(runs) };
   },
 });
 
@@ -310,8 +328,10 @@ async function lastSeen(ctx: MutationCtx, accountId: Id<"accounts">) {
  * run in flight, or one fresh from an open tab, is just moved on. One a whole turn behind (the batch was full, or the
  * scheduler was down) goes back to its phase from now rather than catching up in a burst.
  *
- * Accounts it has not seen yet (new, or from before it) are given their phase first; their first background run
- * comes round at it, within the quarter hour.
+ * Each account's turn is kept in its accountState, not on its row (which every query reads, so moving it on there ran
+ * them all again every quarter hour). Accounts it has not seen yet (new, or whose turn is still on their row from
+ * before) have their turn put there first, and their row marked -1 once, for good; a new account's first background
+ * run comes round at its phase, within the quarter hour.
  */
 export const tick = internalMutation({
   args: { round: v.optional(v.number()) },
@@ -319,19 +339,28 @@ export const tick = internalMutation({
     const now = Date.now();
     // A missing field sorts before every number in an index, so the unseen are asked for by name.
     const unseen = await ctx.db.query("accounts").withIndex("by_nextSync", i => i.eq("nextSyncAt", undefined)).take(TICK_BATCH);
-    for (const a of unseen) await ctx.db.patch(a._id, { nextSyncAt: slotAfter(now, phaseOf(a._id)) });
+    const moving = await ctx.db.query("accounts").withIndex("by_nextSync", i => i.gte("nextSyncAt", 0)).take(TICK_BATCH);
+    for (const a of [...unseen, ...moving]) {
+      await setState(ctx, a._id, { nextSyncAt: a.nextSyncAt ?? slotAfter(now, phaseOf(a._id)) });
+      await ctx.db.patch(a._id, { nextSyncAt: -1 });
+    }
 
     const due = await ctx.db
-      .query("accounts")
+      .query("accountState")
       .withIndex("by_nextSync", i => i.gte("nextSyncAt", 0).lte("nextSyncAt", now))
       .take(TICK_BATCH);
     const runIds: Id<"syncs">[] = [];
-    for (const account of due) {
+    for (const state of due) {
+      const account = await ctx.db.get(state.accountId);
+      if (!account) {
+        await ctx.db.delete(state._id);
+        continue;
+      }
       const runId = await plan(ctx, account, "background", false, now);
       if (runId) runIds.push(runId);
       const every = (await lastSeen(ctx, account._id)) > now - DORMANT_AFTER ? PERIOD : DORMANT_EVERY;
-      const next = account.nextSyncAt! + every;
-      await ctx.db.patch(account._id, { nextSyncAt: next > now ? next : slotAfter(now, phaseOf(account._id)) });
+      const next = state.nextSyncAt! + every;
+      await ctx.db.patch(state._id, { nextSyncAt: next > now ? next : slotAfter(now, phaseOf(account._id)) });
     }
     if (runIds.length) {
       const workIds = await backgroundPool.enqueueActionBatch(
@@ -343,7 +372,7 @@ export const tick = internalMutation({
       for (let i = 0; i < runIds.length; i++) await ctx.db.patch(runIds[i], { workId: workIds[i] });
     }
     // More due than a batch: a few more rounds now, and the rest wait for the next tick.
-    const more = due.length === TICK_BATCH || unseen.length === TICK_BATCH;
+    const more = due.length === TICK_BATCH || unseen.length === TICK_BATCH || moving.length === TICK_BATCH;
     if (more && round + 1 < TICK_ROUNDS) await ctx.scheduler.runAfter(0, internal.sync.tick, { round: round + 1 });
   },
 });
@@ -371,7 +400,7 @@ export const attempt = internalMutation({
     if (!run || !account) return null;
     const steps = run.steps.map(s => (s.status === "running" ? { ...s, status: "waiting" as const } : s));
     await ctx.db.patch(runId, { attempts: (run.attempts ?? 0) + 1, aliveAt: Date.now(), steps });
-    return { run: { ...run, steps }, account };
+    return { run: { ...run, steps }, account: await live(ctx, account) };
   },
 });
 
@@ -446,9 +475,21 @@ const failure = (e: unknown) => (e instanceof Error && e.message ? e.message : "
 type Mark = (key: string, status: Status, o?: Outcome) => Promise<void>;
 
 async function runSync(ctx: ActionCtx, run: Doc<"syncs">, account: Doc<"accounts">) {
+  // A quiet run keeps its steps' ends here and writes them as each source ends (flush); its starts are never shown.
+  const quiet = !loud(run);
+  const pending: StepMark[] = [];
+  const flush = async () => {
+    if (!pending.length) return;
+    const on = await ctx.runMutation(internal.sync.steps, { runId: run._id, marks: pending.splice(0) });
+    if (!on) throw new NonRetryableError("This sync is over.");
+  };
   const markIn =
     (source: Source): Mark =>
     async (key, status, o = {}) => {
+      if (quiet) {
+        if (status !== "running") pending.push({ key, source, status, ...o });
+        return;
+      }
       const on = await ctx.runMutation(internal.sync.step, { runId: run._id, key, source, status, ...o });
       if (!on) throw new NonRetryableError("This sync is over.");
     };
@@ -478,10 +519,17 @@ async function runSync(ctx: ActionCtx, run: Doc<"syncs">, account: Doc<"accounts
       if (compass.code === "signed-out" || compass.code === "password-changed") return;
       for (const key of left) if (!settled.has(key)) await mark(key, "failed", { note: compass.message });
     }
+    await flush();
   }
 
-  if (run.steps.some(s => s.source === "connect")) await runConnect(ctx, account, run, markIn("connect"));
-  if (run.steps.some(s => s.source === "canvas")) await runCanvas(ctx, account, run, markIn("canvas"));
+  if (run.steps.some(s => s.source === "connect")) {
+    await runConnect(ctx, account, run, markIn("connect"));
+    await flush();
+  }
+  if (run.steps.some(s => s.source === "canvas")) {
+    await runCanvas(ctx, account, run, markIn("canvas"));
+    await flush();
+  }
   await ctx.runMutation(internal.sync.finish, { runId: run._id });
 }
 
@@ -626,6 +674,26 @@ export const step = internalMutation({
   },
 });
 
+/** A quiet run's steps, as one of its sources ends. Says whether the run is still on, as `step` does. */
+type StepMark = { key: string; source: Source; status: Status; count?: number; note?: string };
+export const steps = internalMutation({
+  args: {
+    runId: v.id("syncs"),
+    marks: v.array(v.object({ key: v.string(), source: sourceV, status: statusV, count: v.optional(v.number()), note: v.optional(v.string()) })),
+  },
+  handler: async (ctx, { runId, marks }): Promise<boolean> => {
+    const run = await ctx.db.get(runId);
+    if (!run || run.finishedAt) return false;
+    const at = Date.now();
+    const next = run.steps.map(s => {
+      const m = [...marks].reverse().find(x => x.key === s.key && x.source === s.source);
+      return m ? { key: m.key, source: m.source, status: m.status, count: m.count, note: m.note?.slice(0, 200), at } : s;
+    });
+    await ctx.db.patch(runId, { aliveAt: at, steps: next });
+    return true;
+  },
+});
+
 /** The job's own end: anything it did not get to is marked skipped. */
 export const finish = internalMutation({
   args: { runId: v.id("syncs") },
@@ -635,13 +703,24 @@ export const finish = internalMutation({
   },
 });
 
-/** Keeps what a Compass step fetched, replacing the last. */
+/** Keeps what a Compass step fetched, replacing the last. The same again is not written (lib/same.ts). */
 export const keep = internalMutation({
   args: { accountId: v.id("accounts"), kind: v.string(), data: v.any() },
   handler: async (ctx, { accountId, kind, data }) => {
     if (!(await ctx.db.get(accountId))) return;
+    const now = Date.now();
     const row = await ctx.db.query("compassCache").withIndex("by_account_kind", i => i.eq("accountId", accountId).eq("kind", kind)).unique();
-    if (row) await ctx.db.patch(row._id, { data, fetchedAt: Date.now() });
-    else await ctx.db.insert("compassCache", { accountId, kind, data, fetchedAt: Date.now() });
+    if (!row) await ctx.db.insert("compassCache", { accountId, kind, data, fetchedAt: now });
+    else if (!same(row.data, data)) await ctx.db.patch(row._id, { data, fetchedAt: now });
+    else if (now - row.fetchedAt > STAMP_EVERY) await ctx.db.patch(row._id, { fetchedAt: now });
+  },
+});
+
+/** When a step last came back done for the account (0 if not in the runs kept): a fetch on demand skips what is fresh. */
+export const checkedAt = internalQuery({
+  args: { accountId: v.id("accounts"), step: v.string() },
+  handler: async (ctx, { accountId, step }): Promise<number> => {
+    const runs = await ctx.db.query("syncs").withIndex("by_account", i => i.eq("accountId", accountId)).order("desc").take(KEEP_RUNS + 2);
+    return checkedIn(runs)[step] ?? 0;
   },
 });

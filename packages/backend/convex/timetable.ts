@@ -5,6 +5,7 @@ import type { Doc, Id } from "./_generated/dataModel";
 import { getCalendarEvents, type CompassSession } from "@compassneo/compass";
 import { percentOf, scoreOf, type ConnectNotice, type SubjectGrade } from "@compassneo/connect";
 import { hashToken } from "./lib/crypto";
+import { same } from "./lib/same";
 import { deviceAccount, withCompass, type Problem } from "./lib/compass";
 import { addDays, dayOf, daysBetween, isDay, schoolToday } from "./lib/days";
 import { huesFor, shortName, subjectName, teacherDirectory, type Person } from "./lib/match";
@@ -325,7 +326,7 @@ export const keepDays = internalMutation({
     const put = async (kind: string, data: unknown) => {
       const row = await ctx.db.query("compassCache").withIndex("by_account_kind", i => i.eq("accountId", accountId).eq("kind", kind)).unique();
       if (!row) await ctx.db.insert("compassCache", { accountId, kind, data, fetchedAt: now });
-      else if (JSON.stringify(row.data) !== JSON.stringify(data)) await ctx.db.patch(row._id, { data, fetchedAt: now });
+      else if (!same(row.data, data)) await ctx.db.patch(row._id, { data, fetchedAt: now });
     };
 
     for (const { day, items } of days) if (isDay(day)) await put(`day:${day}`, items);

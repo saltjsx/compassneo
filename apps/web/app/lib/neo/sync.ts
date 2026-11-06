@@ -133,14 +133,26 @@ export function useAutoSync(token: string | null) {
 const REFRESH_GIVE_UP = 90_000;
 
 /**
- * Refreshing something the sync brings and nothing else fetches (grades, notices): it starts a sync now, as "Sync now"
- * does, and counts as refreshing until the thing's own fetchedAt is newer than the ask, so it needs nothing of the
- * run but what it writes. The query updates by itself; after REFRESH_GIVE_UP it stops spinning either way.
+ * When something the sync brings was last checked: its row's fetchedAt, or later, when one of its steps ("compass:news",
+ * "connect:grades") came back done since. A row that comes back the same is not written again (the server's
+ * lib/same.ts), so its own time can trail the last check. Undefined while there is no row.
  */
-export function useSyncRefresh(token: string | null, fetchedAt: number | undefined) {
+export function useChecked(token: string | null, fetchedAt: number | undefined, steps: string[]) {
+  const checked = useSyncState(token)?.checked;
+  if (fetchedAt == null) return undefined;
+  return Math.max(fetchedAt, ...steps.map(k => checked?.[k] ?? 0));
+}
+
+/**
+ * Refreshing something the sync brings and nothing else fetches (grades, notices): it starts a sync now, as "Sync now"
+ * does, and counts as refreshing until the thing was checked after the ask (useChecked, with its steps), so it needs
+ * nothing of the run but what it writes. The query updates by itself; after REFRESH_GIVE_UP it stops spinning either way.
+ */
+export function useSyncRefresh(token: string | null, fetchedAt: number | undefined, steps: string[]) {
   const syncNow = useMutation(api.sync.now);
   const [askedAt, setAskedAt] = useState<number | null>(null);
-  const landed = askedAt != null && fetchedAt != null && fetchedAt >= askedAt;
+  const checkedAt = useChecked(token, fetchedAt, steps);
+  const landed = askedAt != null && checkedAt != null && checkedAt >= askedAt;
   useEffect(() => {
     if (askedAt == null) return;
     if (landed) return setAskedAt(null);

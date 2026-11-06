@@ -2,6 +2,7 @@ import { v } from "convex/values";
 import { internalMutation, internalQuery, query } from "./_generated/server";
 import { scoreOf, type Score, type SubjectGrade } from "@compassneo/connect";
 import { hashToken } from "./lib/crypto";
+import { same, STAMP_EVERY } from "./lib/same";
 import { isWA } from "./lib/connect";
 import { recordGrades, type History } from "./lib/history";
 
@@ -57,17 +58,22 @@ export const store = internalMutation({
     if (!(await ctx.db.get(accountId))) return;
     const row = await ctx.db.query("connectCache").withIndex("by_account_kind", i => i.eq("accountId", accountId).eq("kind", kind)).unique();
     // An error keeps the last good data (and when it was fetched) beside it; new data clears the error.
+    // The same again is not written, bar the time once it is STAMP_EVERY old (lib/same.ts).
     const now = Date.now();
     const next = data !== undefined ? { data, error: undefined, fetchedAt: now, checkedAt: now } : { error, checkedAt: now };
-    if (row) await ctx.db.patch(row._id, next);
-    else await ctx.db.insert("connectCache", { accountId, kind, ...next });
+    if (!row) await ctx.db.insert("connectCache", { accountId, kind, ...next });
+    else {
+      const unchanged = data !== undefined ? row.error === undefined && same(row.data, data) : row.error === error;
+      if (!unchanged) await ctx.db.patch(row._id, next);
+      else if (now - row.checkedAt > STAMP_EVERY) await ctx.db.patch(row._id, data !== undefined ? { fetchedAt: now, checkedAt: now } : { checkedAt: now });
+    }
 
     // Fresh grades move the history on (lib/history.ts): a point when a score moves, a date when a mark appears.
     if (kind === "grades" && Array.isArray(data)) {
       const kept = await ctx.db.query("connectCache").withIndex("by_account_kind", i => i.eq("accountId", accountId).eq("kind", "history")).unique();
       const history = recordGrades((kept?.data as History | undefined) ?? null, data as SubjectGrade[], now);
       if (kept) {
-        if (JSON.stringify(kept.data) !== JSON.stringify(history)) await ctx.db.patch(kept._id, { data: history, fetchedAt: now, checkedAt: now });
+        if (!same(kept.data, history)) await ctx.db.patch(kept._id, { data: history, fetchedAt: now, checkedAt: now });
       } else await ctx.db.insert("connectCache", { accountId, kind: "history", data: history, fetchedAt: now, checkedAt: now });
     }
   },

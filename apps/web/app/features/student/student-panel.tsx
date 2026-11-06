@@ -8,7 +8,7 @@ import { ago } from "@/lib/neo/time";
 import { useAttendance, useChronicle, useEvents } from "@/lib/neo/student";
 import { useAnnouncements } from "@/lib/neo/announcements";
 import { useOverviewGrades } from "@/lib/neo/overview";
-import { useSyncRefresh } from "@/lib/neo/sync";
+import { useChecked, useSyncRefresh } from "@/lib/neo/sync";
 import type { ClassTab } from "@/features/class/class-panel";
 import { SidePanel, type PanelLayout } from "@/features/panel/side-panel";
 import { AttendancePage } from "./attendance";
@@ -46,9 +46,9 @@ export function StudentPanel(props: Props) {
   const events = useEvents(token);
   const chronicle = useChronicle(token);
   const noticesData = useAnnouncements(token);
-  const notices = { data: noticesData, ...useSyncRefresh(token, noticesData?.fetchedAt) };
+  const notices = { data: noticesData, ...useSyncRefresh(token, noticesData?.fetchedAt, STEPS.notices) };
   const gradesData = useOverviewGrades(token, props.today);
-  const grades = { data: gradesData, ...useSyncRefresh(token, gradesData?.status === "ready" ? gradesData.fetchedAt : undefined) };
+  const grades = { data: gradesData, ...useSyncRefresh(token, gradesData?.status === "ready" ? gradesData.fetchedAt : undefined, STEPS.grades) };
   const hue = page ? pageHue(page, attendance.data?.compass?.overall.percent) : undefined;
   return (
     <SidePanel open={!!page} name="student-panel" layout={layout} hue={hue} labelledBy="student-panel-title" onClose={onClose}>
@@ -65,7 +65,16 @@ type Queries = {
   grades: { data: ReturnType<typeof useOverviewGrades> } & ReturnType<typeof useSyncRefresh>;
 };
 
-function Body({ page, zone, now, today, onClose, onOpenClass, attendance, events, chronicle, notices, grades }: Props & Queries & { page: StudentPage }) {
+/** The sync's steps that bring each page (server: sync.ts), for when it was last checked (useChecked). */
+const STEPS: Record<StudentPage, string[]> = {
+  attendance: ["compass:attendance", "connect:attendance"],
+  events: ["compass:events"],
+  chronicle: ["compass:chronicle"],
+  notices: ["compass:news"],
+  grades: ["connect:grades", "canvas:grades"],
+};
+
+function Body({ page, token, zone, now, today, onClose, onOpenClass, attendance, events, chronicle, notices, grades }: Props & Queries & { page: StudentPage }) {
   const close = useRef<HTMLButtonElement>(null);
   // Focus lands in the panel when it opens, so a keyboard or screen reader carries on from there.
   useEffect(() => close.current?.focus({ preventScroll: true }), []);
@@ -77,7 +86,7 @@ function Body({ page, zone, now, today, onClose, onOpenClass, attendance, events
   };
 
   const a = attendance.data;
-  const fetchedAt =
+  const rowAt =
     page === "attendance"
       ? (a?.compass?.fetchedAt ?? (a?.connect && "fetchedAt" in a.connect ? a.connect.fetchedAt : undefined))
       : page === "events"
@@ -89,6 +98,7 @@ function Body({ page, zone, now, today, onClose, onOpenClass, attendance, events
               ? grades.data.fetchedAt
               : undefined
             : chronicle.data?.fetchedAt;
+  const fetchedAt = useChecked(token, rowAt, STEPS[page]);
   const status = q.refreshing ? "Getting the latest" :fetchedAt ? `Updated ${ago(fetchedAt, now)}` : q.data === null ? "Not synced yet" : "";
 
   const notYet = (

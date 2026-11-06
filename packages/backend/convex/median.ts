@@ -8,6 +8,7 @@ import { addDays, schoolToday } from "./lib/days";
 import { shortName, subjectName } from "./lib/match";
 import { compassRow, type StoredClass } from "./timetable";
 import { begin } from "./sync";
+import { live } from "./accounts";
 
 /**
  * Median, the support agent behind the help button (lib/median.ts has its tools, http.ts serves them).
@@ -35,8 +36,9 @@ const byKey = (ctx: QueryCtx, key: string) => ctx.db.query("accounts").withIndex
 export const account = internalQuery({
   args: { key: v.string() },
   handler: async (ctx, { key }) => {
-    const a = await byKey(ctx, key);
-    if (!a) return null;
+    const found = await byKey(ctx, key);
+    if (!found) return null;
+    const a = await live(ctx, found);
     const devices = await ctx.db.query("sessions").withIndex("by_account", i => i.eq("accountId", a._id)).collect();
     return {
       school: a.schoolName,

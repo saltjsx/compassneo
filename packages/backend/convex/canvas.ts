@@ -14,6 +14,7 @@ import {
 } from "@compassneo/canvas";
 import { deviceAccount, type Problem } from "./lib/compass";
 import { seal } from "./lib/crypto";
+import { same, STAMP_EVERY } from "./lib/same";
 import { accountFor, semesterOf } from "./timetable";
 import { begin } from "./sync";
 import { canvasGrades } from "./lib/grades";
@@ -293,15 +294,17 @@ export const keepGrades = internalMutation({
     };
     const subjects = canvasGrades(courses, works, semesterOf(schoolToday(account.slug)), home, new Set(view?.codeOf.keys() ?? []));
     const now = Date.now();
+    // The same again is not written, bar the time once it is STAMP_EVERY old (lib/same.ts).
     const put = async (kind: string, data: unknown) => {
       const r = await row(kind);
-      if (r) await ctx.db.patch(r._id, { data, error: undefined, fetchedAt: now, checkedAt: now });
-      else await ctx.db.insert("canvasCache", { accountId, kind, data, fetchedAt: now, checkedAt: now });
+      if (!r) await ctx.db.insert("canvasCache", { accountId, kind, data, fetchedAt: now, checkedAt: now });
+      else if (r.error !== undefined || !same(r.data, data)) await ctx.db.patch(r._id, { data, error: undefined, fetchedAt: now, checkedAt: now });
+      else if (now - r.checkedAt > STAMP_EVERY) await ctx.db.patch(r._id, { fetchedAt: now, checkedAt: now });
     };
     await put("grades", subjects);
     const kept = await row("history");
     const history = recordGrades((kept?.data as History | undefined) ?? null, subjects, now);
-    if (!kept || JSON.stringify(kept.data) !== JSON.stringify(history)) await put("history", history);
+    if (!kept || !same(kept.data, history)) await put("history", history);
     return subjects.length;
   },
 });

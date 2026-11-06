@@ -63,14 +63,31 @@ export default defineSchema({
      */
     calendarNonce: v.optional(v.string()),
     /**
-     * When the background scheduler next syncs this account (convex/sync.ts). Each account keeps its own phase in the
-     * quarter hour, so background syncs are spread out rather than all at once. Unset until the scheduler first sees it.
+     * The background scheduler's turn used to live here; it is in accountState now. Unset until the scheduler first
+     * sees the account, -1 once its turn is kept there (sync.ts tick). sealedCompass, compassAt, sealedConnect and
+     * connectAt here are what the sign-in left; newer ones are in accountState.
      */
     nextSyncAt: v.optional(v.number()),
     createdAt: v.number(),
     updatedAt: v.number(),
   })
     .index("by_key", ["key"])
+    .index("by_nextSync", ["nextSyncAt"]),
+
+  /**
+   * What changes about an account on nearly every sync, kept off its row (accounts.ts, "state"): Compass and Connect
+   * rotating their cookies, and the background scheduler's next turn. Every query reads the account row, so a write
+   * to it runs every open query again; these writes land here instead, where only the sync reads them.
+   */
+  accountState: defineTable({
+    accountId: v.id("accounts"),
+    sealedCompass: v.optional(v.string()),
+    compassAt: v.optional(v.number()),
+    sealedConnect: v.optional(v.string()),
+    connectAt: v.optional(v.number()),
+    nextSyncAt: v.optional(v.number()),
+  })
+    .index("by_account", ["accountId"])
     .index("by_nextSync", ["nextSyncAt"]),
 
   /** A signed-in device: the hash of the token the browser holds, pointing at its account. */
