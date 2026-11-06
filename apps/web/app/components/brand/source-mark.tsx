@@ -5,7 +5,8 @@ import canvasMark from "./canvas-mark.svg";
 
 /**
  * Where something came from, as the source's own mark: Compass's blue compass ring, Connect's three-colour knot,
- * Canvas's red ring of dots.
+ * Canvas's red ring of dots (drawn heavier than Canvas's own, so it holds together at 13 to 14px beside the other two's
+ * solid marks, and in a deeper red, so it never reads as the fail coral).
  * Small and quiet, in place of a text tag. Named for assistive tech ("From Compass"), and in a tooltip on hover.
  */
 export type Source = "compass" | "connect" | "canvas";

@@ -64,7 +64,25 @@ const canvasKind = (courseId: string) => `modules:${courseId}`;
  */
 const CANVAS_ITEMS = new Set(["File", "ExternalUrl", "Page", "Assignment", "Quiz", "Discussion", "ExternalTool"]);
 
-/** A course's modules as folders. A file opens through Compass Neo's file route; anything else opens on Canvas. */
+/**
+ * What a module item is, as a row shows it: an outside link is a link (its site's icon and name); Canvas's own pages,
+ * assignments and discussions are those kinds, so they never pass as a link to the school's Canvas address.
+ */
+const canvasKindOf = (type: string): ResourceNode["kind"] =>
+  type === "File"
+    ? "file"
+    : type === "ExternalUrl"
+      ? "link"
+      : type === "Assignment" || type === "Quiz"
+        ? "submission"
+        : type === "Discussion"
+          ? "discussion"
+          : "page";
+
+/**
+ * A course's modules as folders. A file opens through Compass Neo's file route; anything else opens on Canvas (a page
+ * here is one of Canvas's, with no page to read inside Compass Neo: page stays null).
+ */
 async function fromCanvas(accountId: Id<"accounts">, modules: CanvasModule[]): Promise<ResourceNode[]> {
   const out: ResourceNode[] = [];
   for (const m of modules) {
@@ -75,7 +93,7 @@ async function fromCanvas(accountId: Id<"accounts">, modules: CanvasModule[]): P
       children.push({
         key: `canvas:${i.id}`,
         name: i.title,
-        kind: file ? "file" : "link",
+        kind: file ? "file" : canvasKindOf(i.type),
         source: "canvas",
         href: file ? await fileLink(accountId, "canvas", `/api/v1/files/${i.fileId}`, i.title) : i.url,
         external: !file,

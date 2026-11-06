@@ -215,10 +215,15 @@ function search(lib: Lib, q: string): Leaf[] {
   return [...leaves, ...plans.map(p => ({ node: { ...p.node, name: p.label }, trail: [folderOf("@plans", "Lesson plans", "compass", [])] }))];
 }
 
+/** Canvas's own things, which open on Canvas: what they are, in place of the school's Canvas address. */
+const ON_CANVAS: Partial<Record<Node["kind"], string>> = { page: "Canvas page", submission: "Canvas assignment", discussion: "Canvas discussion" };
+
 /** A row's quiet line: a link's site; else where it is (in New and a search) or what it is (in its folder). */
 function lineOf(l: Leaf, how: "where" | "what") {
   const n = l.node;
   if (n.kind === "link") return hostOf(n.href) ?? "Link";
+  const canvas = n.source === "canvas" ? ON_CANVAS[n.kind] : undefined;
+  if (canvas) return how === "where" && l.trail.length ? `${canvas} · ${l.trail[l.trail.length - 1]!.name}` : canvas;
   const folder = l.trail[l.trail.length - 1];
   if (how === "where" && folder) return folder.name;
   return [kindOfNode(n).label, sizeText(n.size)].filter(Boolean).join(" · ");
@@ -424,7 +429,8 @@ function Rows({ leaves, ctx, how }: { leaves: Leaf[]; ctx: Ctx; how: "where" | "
       {leaves.map(l => {
         const n = l.node;
         const mark = marks ? <SourceMark source={n.source} size={14} /> : undefined;
-        if (n.kind === "page") return <PageItem key={n.key} node={n} title={n.name} meta={lineOf(l, how)} ctx={ctx} aside={mark} wide={thumbs} />;
+        // A Compass page opens in place; a Canvas page (nothing to read here) is a row that opens on Canvas.
+        if (n.kind === "page" && n.source !== "canvas") return <PageItem key={n.key} node={n} title={n.name} meta={lineOf(l, how)} ctx={ctx} aside={mark} wide={thumbs} />;
         const yt = n.kind === "link" ? youtubeId(n.href) : null;
         const glyph = yt ? <Thumb id={yt} url={n.href} /> : n.kind === "link" ? <Favicon url={n.href} /> : <KindGlyph kind={kindOfNode(n)} />;
         const lead = thumbs ? <span className="neo-lead">{glyph}</span> : glyph;
@@ -442,6 +448,7 @@ function Rows({ leaves, ctx, how }: { leaves: Leaf[]; ctx: Ctx; how: "where" | "
             file={n.fileName ?? n.name}
             source={n.source}
             mime={n.mime}
+            wrap
             className="rounded-tag px-2.5 py-2"
           />
         );
@@ -467,7 +474,7 @@ function PickRow({ leaf, lead, meta, picking }: { leaf: Leaf; lead: React.ReactN
       </span>
       {lead}
       <span className="min-w-0 flex-1">
-        <span className="block truncate type-label text-text-1">{titleOf(leaf.node)}</span>
+        <span className="line-clamp-2 type-label text-text-1 [overflow-wrap:anywhere]">{titleOf(leaf.node)}</span>
         <span className="block truncate type-caption text-text-3">{meta}</span>
       </span>
     </button>
@@ -619,7 +626,7 @@ function PageItem({
       <button type="button" aria-expanded={open} onClick={toggle} className={cn("neo-row-button flex w-full min-w-0 items-center gap-3 text-start", className)}>
         {wide ? <span className="neo-lead">{glyph}</span> : glyph}
         <div className="min-w-0 flex-1">
-          <p className="truncate type-label text-text-1">{title}</p>
+          <p className="line-clamp-2 type-label text-text-1 [overflow-wrap:anywhere]">{title}</p>
           <p className="truncate type-caption text-text-3">{meta}</p>
         </div>
         {aside}

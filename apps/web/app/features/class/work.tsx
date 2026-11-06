@@ -5,6 +5,7 @@ import { Button } from "@/components/glaze/ui/button";
 import { Input } from "@/components/glaze/ui/input";
 import {
   Attachment,
+  Calendar,
   ChevronLeft,
   ChevronRight,
   Document,
@@ -145,6 +146,7 @@ export function workItems(work: ClassWork | null | undefined) {
 
 export function groupWork(items: WorkItem[], now: number) {
   const todo: WorkItem[] = [];
+  const undated: WorkItem[] = [];
   const overdue: WorkItem[] = [];
   const done: WorkItem[] = [];
   const earlier: WorkItem[] = [];
@@ -152,15 +154,17 @@ export function groupWork(items: WorkItem[], now: number) {
     const s = stateOf(w, now);
     if (s === "overdue") overdue.push(w);
     else if (s === "submitted" || s === "late") done.push(w);
+    else if (s === "todo" && !w.due) undated.push(w);
     else if (s === "todo" || (s === "none" && w.due && Date.parse(w.due) >= now)) todo.push(w);
     else earlier.push(w);
   }
   const at = (d: string | null, none: number) => (d ? Date.parse(d) : none);
   todo.sort((a, b) => at(a.due, Infinity) - at(b.due, Infinity));
+  undated.sort((a, b) => a.name.localeCompare(b.name));
   overdue.sort((a, b) => at(b.due, 0) - at(a.due, 0));
   done.sort((a, b) => at(latest(b.handedIn) ?? b.due, 0) - at(latest(a.handedIn) ?? a.due, 0));
   earlier.sort((a, b) => at(b.due, 0) - at(a.due, 0));
-  return { todo, overdue, done, earlier };
+  return { todo, undated, overdue, done, earlier };
 }
 
 function WorkRow({
@@ -255,6 +259,7 @@ export function WorkPage({
 }) {
   const [doneOpen, setDoneOpen] = useState<boolean | null>(null);
   const [earlierOpen, setEarlierOpen] = useState(false);
+  const [undatedOpen, setUndatedOpen] = useState<boolean | null>(null);
   if (work === undefined) return <SkeletonBlock rows={[40, 40, 40, 40]} />;
   if (!work) return null;
   const { items, both } = workItems(work);
@@ -277,20 +282,28 @@ export function WorkPage({
     ));
   // A side still on its way may have work in it: no "nothing set" until every side is in.
   const waiting = work.compass.status === "missing" || work.connect.status === "missing" || work.canvas.status === "missing";
-  const clear = !g.todo.length && !g.overdue.length;
+  const clear = !g.todo.length && !g.overdue.length && !g.undated.length;
+  // Work with no due date (Canvas has a lot) folds away, so it never pushes what is overdue or due soon down the page;
+  // open on its own when it is all there is to do.
+  const undatedShown = undatedOpen ?? (!g.todo.length && !g.overdue.length);
 
   if (!items.length && waiting) return <SkeletonBlock rows={[40, 40, 40, 40]} />;
   return (
     <>
+      {g.overdue.length > 0 && (
+        <Block icon={Warning} title="Overdue">
+          {rows(g.overdue)}
+        </Block>
+      )}
       {g.todo.length > 0 && (
         <Block icon={LearningTask} title="To do">
           {rows(g.todo)}
         </Block>
       )}
-      {g.overdue.length > 0 && (
-        <Block icon={Warning} title="Overdue">
-          {rows(g.overdue)}
-        </Block>
+      {g.undated.length > 0 && (
+        <FoldBlock icon={Calendar} title="No due date" count={g.undated.length} open={undatedShown} onToggle={() => setUndatedOpen(!undatedShown)}>
+          {rows(g.undated)}
+        </FoldBlock>
       )}
       {clear && items.length > 0 && (
         <div className="neo-stack neo-notice flex items-center gap-3 px-4 py-3.5">
@@ -376,9 +389,9 @@ export function WorkDetail({
         <span className="min-w-0 truncate type-label-sm text-text-2">{dueLong(item.due, zone, today, now)}</span>
       </div>
       {last && (
-        <p className="flex min-w-0 items-center gap-2 px-1 type-caption text-text-3">
-          <Icon icon={Time} size={14} className="shrink-0" />
-          <span className="min-w-0 truncate">{last}</span>
+        <p className="flex min-w-0 items-start gap-2 px-1 type-caption text-text-3">
+          <Icon icon={Time} size={14} className="mt-px shrink-0" />
+          <span className="min-w-0">{last}</span>
         </p>
       )}
     </div>
@@ -482,13 +495,22 @@ function HandIn({ item, flows }: { item: WorkItem; flows: WorkFlows }) {
   if (item.url && !item.canSubmit)
     return (
       <Block icon={Upload} title="Hand in" className="flex flex-col items-start gap-3 px-4 py-3.5">
-        <p className="flex items-start gap-2.5 type-body-sm text-text-2">
-          <Icon icon={Information} size={16} className="mt-0.5 text-text-3" />
-          {item.state === "none" ? (item.why ?? "This is not handed in online.") : `This is handed in on ${SOURCE[item.source]}.`}
-        </p>
-        <Button size="sm" variant="secondary" render={<a href={item.url} target="_blank" rel="noreferrer" />} nativeButton={false}>
+        {item.state === "none" ? (
+          // Not handed in online at all: said as Compass says it, and the link only looks at it, so it never reads as the
+          // way to hand it in.
+          <p className="flex items-start gap-2.5 type-body-sm text-text-2">
+            <Icon icon={Locked} size={16} className="mt-0.5 text-text-3" />
+            {item.why ?? "This is not handed in online."}
+          </p>
+        ) : (
+          <p className="flex items-start gap-2.5 type-body-sm text-text-2">
+            <Icon icon={Information} size={16} className="mt-0.5 text-text-3" />
+            This is handed in on {SOURCE[item.source]}.
+          </p>
+        )}
+        <Button size="sm" variant={item.state === "none" ? "ghost" : "secondary"} className={item.state === "none" ? "-ms-2" : undefined} render={<a href={item.url} target="_blank" rel="noreferrer" />} nativeButton={false}>
           <SourceMark source={item.source} size={14} />
-          Open in {SOURCE[item.source]}
+          {item.state === "none" ? "View" : "Open"} in {SOURCE[item.source]}
           <Icon icon={External} size={14} />
         </Button>
       </Block>

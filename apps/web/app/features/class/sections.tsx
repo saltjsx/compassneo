@@ -409,8 +409,8 @@ export function NoticesBlock({ notices, zone, today }: { notices: ClassDetail["n
   const [all, setAll] = useState(false);
   if (!notices.length) return null;
   const shown = all ? notices : notices.slice(0, SHOWN_NOTICES);
-  // Canvas's say where they are from (and Connect's too, beside them).
-  const mixed = notices.some(n => n.source === "canvas");
+  // Each says where it is from only when they come from more than one place, as Work and Files do.
+  const mixed = new Set(notices.map(n => n.source)).size > 1;
   return (
     <Block icon={Notice} title="Notices">
       {shown.map(n => (
