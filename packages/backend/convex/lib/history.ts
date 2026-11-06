@@ -39,6 +39,11 @@ export type History = {
    * Connect's own overall mark (packages/connect getGrades, percentOf). History written before is moved over once.
    */
   reading?: number;
+  /**
+   * How Canvas's grades were worked out when this history began (canvas.ts keepGrades, CANVAS_READING). Points from
+   * another way of working them out are not comparable, so a Canvas history from before starts again.
+   */
+  canvasReading?: number;
 };
 
 const READING = 2;

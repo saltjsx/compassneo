@@ -219,14 +219,22 @@ handing in, and the class's notices take its course's announcements.
 
 **Grades.** A school without Connect gets the Grades row from Canvas (`lib/grades.ts`): the sync's grades step works
 them out from the courses and assignments already kept (`canvas.keepGrades`, no call to Canvas) in Connect's own shape,
-with a grade history beside them (`lib/history.ts`), so the Grades row, the Grades page and each class's grade read
-them unchanged, through `gradeRows`. A subject is a course that is a timetable class's, or that shows the student a
-score of its own; its tasks are the assignments that count, plus marks from a course no class claims that name it (a
-school's course of formal assessments puts each subject's exams there). A mark counts once Canvas has released it, and
-the course's own score is the subject's mark when it shows one. Weightings are only ever Canvas's own (assignment group
-weights, when a course uses them): otherwise a subject is its points out of all of them, as Canvas works an unweighted
-course out, and no task claims a share of the grade, since schools often weight formal tasks only in the task's words.
-A class finds its subject through its course (`subjectMatcher`), the same course its work and files come from.
+with a grade history beside them (`lib/history.ts`), so the Grades row, the Grades page and each class's grade read them
+unchanged, through `gradeRows`. Many schools keep formal assessments in a course of their own, each named for its
+subject, while a class's own course fills with homework, checkpoint quizzes and class activities that carry points but
+are not the grade. A mark that reaches a class from a course no class claims (named for it: `classForName`) is formal,
+and once two or more classes get formal marks the school works that way: each subject's grade is its formal assessments
+alone, never its homework or Canvas's own score for the course (which blends the homework in), and a subject with
+nothing formal marked yet has no mark. Formal marks for no current class make a subject of their assignment group (last
+semester's Commerce), once the student has a mark in it, since such a course is shared by the whole year. A school
+without such a course gets each course as Canvas marks it: its own score when it shows one, else its assignments that
+count. Weightings are the teacher's own, written into each task ("Task weighting 25%", `writtenWeight`), when every task
+in the subject states one and they make the whole; else Canvas's group weights where a course uses them; else none, and
+a subject is its points out of all of them. No share of the grade is ever guessed. Work whose assignment group or course
+names a semester ("Commerce Semester 1", "Drama Sem2") is that semester's; the rest is the semester it is now. A
+history begun under an earlier way of working Canvas's grades out starts again (`canvasReading`), so the change never
+reads as a jump. A class finds its subject through its course (`subjectMatcher`), the same course its work and files
+come from.
 
 **Files.** A class's Files tab takes its course's modules (`resources.ts`), one folder per module in the teacher's
 order: many schools hide a course's Files from students, and the modules are where the content is anyway. A module whose

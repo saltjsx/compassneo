@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { CanvasError, CanvasSession, canvasOrigin, cleanToken, looksLikeToken, plainText, publicHost } from "./canvas";
+import { CanvasError, CanvasSession, canvasOrigin, cleanToken, looksLikeToken, plainText, publicHost, writtenWeight } from "./canvas";
 
 const ORIGIN = "https://canvas.example.edu.au";
 const realFetch = globalThis.fetch;
@@ -47,6 +47,14 @@ describe("addresses", () => {
 test("plainText keeps the words and drops the markup", () => {
   expect(plainText("<p>Bring &amp; read</p><script>x()</script><ul><li>one</li></ul>")).toBe("Bring & read\n\none");
   expect(plainText("")).toBeNull();
+});
+
+test("writtenWeight reads the weighting a task states, however it is laid out", () => {
+  expect(writtenWeight("<table><tr><td>Task Weighting (%)</td><td>30%</td></tr></table>")).toBe(30);
+  expect(writtenWeight("<p>Weighting: 25%</p>")).toBe(25);
+  expect(writtenWeight("<p>Weight 12.5 %</p>")).toBe(12.5);
+  expect(writtenWeight("<p>Worth 40 marks. Due Friday.</p>")).toBeNull();
+  expect(writtenWeight("<p>Weighting 140%</p>")).toBeNull();
 });
 
 describe("the session", () => {

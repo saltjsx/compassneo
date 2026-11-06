@@ -273,6 +273,9 @@ export async function fetchAnnouncements(ctx: ActionCtx, account: Doc<"accounts"
  * the steps before it kept, with the grade history moved on as Connect's is (lib/history.ts). Reads and writes only
  * what is kept, so it is one mutation. The count is the subjects with a grade.
  */
+/** How Canvas's grades are worked out (lib/grades.ts canvasGrades). 2: formal assessments alone, written weightings. */
+const CANVAS_READING = 2;
+
 export const keepGrades = internalMutation({
   args: { accountId: v.id("accounts") },
   handler: async (ctx, { accountId }): Promise<number> => {
@@ -303,7 +306,9 @@ export const keepGrades = internalMutation({
     };
     await put("grades", subjects);
     const kept = await row("history");
-    const history = recordGrades((kept?.data as History | undefined) ?? null, subjects, now);
+    // A history begun under another way of working Canvas's grades out starts again: its points would read as jumps.
+    const prior = (kept?.data as History | undefined) ?? null;
+    const history = { ...recordGrades(prior?.canvasReading === CANVAS_READING ? prior : null, subjects, now), canvasReading: CANVAS_READING };
     if (!kept || !same(kept.data, history)) await put("history", history);
     return subjects.length;
   },

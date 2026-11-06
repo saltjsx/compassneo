@@ -127,6 +127,8 @@ export type CanvasAssignment = {
   groupId: string | null;
   /** Left out of the course's grade. */
   omitted: boolean;
+  /** The share of the subject the teacher wrote into the task ("Task weighting: 25%"), out of 100; null when it says none. */
+  weight?: number | null;
   url: string;
   submission: CanvasSubmission | null;
 };
@@ -191,6 +193,16 @@ function nextOf(link: string | null) {
     if (m) return m[1]!;
   }
   return null;
+}
+
+/**
+ * The weighting a teacher wrote into a task's instructions, as many schools' assessment notices state it ("Task
+ * Weighting (%) 30%", "Weighting: 25%"), out of 100. Null when the task states none.
+ */
+export function writtenWeight(html: unknown): number | null {
+  const m = /\bweight(?:ing)?\b[^0-9]{0,40}?(\d{1,3}(?:\.\d+)?)\s*%/i.exec(plainText(html, 50_000) ?? "");
+  const n = m ? Number(m[1]) : NaN;
+  return n > 0 && n <= 100 ? n : null;
 }
 
 // ---------- the session ----------
@@ -320,6 +332,7 @@ export class CanvasSession {
           types: Array.isArray(a.submission_types) ? a.submission_types.map(String) : [],
           groupId: a.assignment_group_id != null ? String(a.assignment_group_id) : null,
           omitted: !!a.omit_from_final_grade,
+          weight: writtenWeight(a.description),
           url: str(a.html_url) ?? `${this.origin}/courses/${courseId}/assignments/${a.id}`,
           submission: s
             ? {
