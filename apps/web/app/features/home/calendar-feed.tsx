@@ -1,19 +1,21 @@
 import { useState } from "react";
 import { Button } from "@/components/glaze/ui/button";
 import { CopyButton } from "@/components/glaze/ui/copy-button";
-import { Calendar, Icon } from "@/components/glaze/icon";
+import { Add, Calendar, Icon } from "@/components/glaze/icon";
 import { useCalendarControls, useCalendarLink, webcalOf } from "@/lib/neo/calendar";
 import { signOutNotice } from "@/lib/neo/session";
+import { InlineConfirm } from "./inline-confirm";
 
 /**
  * The calendar feed, in the profile card: off, a way to turn it on; on, a way to add it to the device's calendar
  * (webcal://, which a phone's calendar subscribes to), the link to paste elsewhere, and a way to turn it off (which ends
- * the link; turning it on again makes a new one).
+ * the link, so it asks first; turning it on again makes a new one).
  */
 export function CalendarFeed({ token }: { token: string }) {
   const link = useCalendarLink(token);
   const { enable, disable } = useCalendarControls();
   const [busy, setBusy] = useState(false);
+  const [confirming, setConfirming] = useState(false);
   const [error, setError] = useState<string | null>(null);
   if (!link) return null;
 
@@ -33,7 +35,10 @@ export function CalendarFeed({ token }: { token: string }) {
     setBusy(true);
     void disable({ token })
       .catch(() => {})
-      .finally(() => setBusy(false));
+      .finally(() => {
+        setBusy(false);
+        setConfirming(false);
+      });
   };
 
   return (
@@ -44,7 +49,7 @@ export function CalendarFeed({ token }: { token: string }) {
           <p className="type-label-sm text-text-1">Calendar</p>
           <p className="type-caption text-text-2">
             {link.url
-              ? "Your timetable, assemblies and due dates, kept up to date in your own calendar."
+              ? "A link for your calendar app to subscribe to, with your timetable, assemblies and due dates."
               : "Put your timetable, assemblies and due dates in your phone's calendar."}
           </p>
           {error && <p className="mt-1 type-caption text-warn-text">{error}</p>}
@@ -54,16 +59,28 @@ export function CalendarFeed({ token }: { token: string }) {
         <>
           <div className="flex gap-2">
             <Button size="sm" variant="secondary" className="flex-1" onClick={() => (window.location.href = webcalOf(link.url!))}>
+              <Icon icon={Add} />
               Add to calendar
             </Button>
-            <CopyButton value={link.url} label="Calendar link" showLabel variant="secondary" size="sm" className="flex-1" />
+            <CopyButton value={link.url} label="calendar link" showLabel copyText="Copy link" variant="secondary" size="sm" className="flex-1" />
           </div>
-          <div className="flex items-center gap-2">
-            <p className="min-w-0 flex-1 type-caption text-text-3">Anyone with the link can see your timetable.</p>
-            <Button size="sm" variant="ghost" pending={busy} onClick={turnOff} className="-me-2 shrink-0">
-              Turn off
-            </Button>
-          </div>
+          {confirming ? (
+            <InlineConfirm
+              question="Turn off the link?"
+              detail="Calendars using it stop updating, and turning it on again makes a new link."
+              confirm="Turn off link"
+              pending={busy}
+              onCancel={() => setConfirming(false)}
+              onConfirm={turnOff}
+            />
+          ) : (
+            <div className="flex items-center gap-2">
+              <p className="min-w-0 flex-1 type-caption text-text-3">Anyone with the link can see your timetable.</p>
+              <Button size="sm" variant="ghost" onClick={() => setConfirming(true)} className="-me-2 shrink-0">
+                Turn off
+              </Button>
+            </div>
+          )}
         </>
       ) : (
         <Button size="sm" variant="secondary" pending={busy} pendingLabel="Making a link" onClick={turnOn}>

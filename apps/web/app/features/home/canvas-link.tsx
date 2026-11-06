@@ -3,17 +3,18 @@ import { Alert, AlertDescription } from "@/components/glaze/ui/alert";
 import { Button } from "@/components/glaze/ui/button";
 import { Field, FieldDescription, FieldError, FieldLabel, Form } from "@/components/glaze/ui/field";
 import { Input } from "@/components/glaze/ui/input";
-import { Icon, Warning } from "@/components/glaze/icon";
+import { Add, Icon, Warning } from "@/components/glaze/icon";
 import { SourceMark } from "@/components/brand/source-mark";
 import { useCanvasControls, useCanvasStatus } from "@/lib/neo/canvas";
 import { signOutNotice } from "@/lib/neo/session";
+import { InlineConfirm } from "./inline-confirm";
 
 const requireValue = (message: string) => (v: unknown) => (String(v ?? "").trim() ? null : message);
 
 /**
  * Canvas, in the profile card. Not added: a way to add it, which opens a short form (the school's Canvas address and
- * an access token, with where to make one). Added: where and as whom, and a way to remove it. Canvas no longer taking
- * the token: says so, with the form to paste a new one.
+ * an access token, with where to make one). Added: where and as whom, and a way to remove it, which asks first (adding
+ * it back takes a new token). Canvas no longer taking the token: says so, with the form to paste a new one.
  */
 export function CanvasLink({ token }: { token: string }) {
   const status = useCanvasStatus(token);
@@ -21,6 +22,7 @@ export function CanvasLink({ token }: { token: string }) {
   const [open, setOpen] = useState(false);
   const [pending, setPending] = useState(false);
   const [removing, setRemoving] = useState(false);
+  const [confirming, setConfirming] = useState(false);
   const [error, setError] = useState<string | null>(null);
   if (!status) return null;
 
@@ -80,7 +82,7 @@ export function CanvasLink({ token }: { token: string }) {
   return (
     <div className="mt-3 flex flex-col gap-2 border-t border-line-faint pt-3">
       <div className="flex items-start gap-2.5">
-        <SourceMark source="canvas" size={16} className="mt-0.5" />
+        <SourceMark source="canvas" size={14} className="mt-0.5" />
         <div className="min-w-0 flex-1">
           <p className="type-label-sm text-text-1">Canvas</p>
           {!status.added ? (
@@ -103,30 +105,40 @@ export function CanvasLink({ token }: { token: string }) {
         form
       ) : !status.added ? (
         <Button size="sm" variant="secondary" onClick={() => setOpen(true)}>
+          <Icon icon={Add} />
           Add Canvas
         </Button>
+      ) : confirming ? (
+        <InlineConfirm
+          question="Remove Canvas?"
+          detail="Its work, files and notices leave Compass Neo, and adding it back takes a new access token."
+          confirm="Remove Canvas"
+          pending={removing}
+          onCancel={() => setConfirming(false)}
+          onConfirm={() => {
+            setRemoving(true);
+            void remove({ token })
+              .catch(() => {})
+              .finally(() => {
+                setRemoving(false);
+                setConfirming(false);
+              });
+          }}
+        />
       ) : (
-        <div className="flex gap-2">
+        <>
           {status.refused && (
-            <Button size="sm" variant="secondary" className="flex-1" onClick={() => setOpen(true)}>
+            <Button size="sm" variant="secondary" onClick={() => setOpen(true)}>
               Add a new token
             </Button>
           )}
-          <Button
-            size="sm"
-            variant={status.refused ? "ghost" : "secondary"}
-            className={status.refused ? undefined : "flex-1"}
-            pending={removing}
-            onClick={() => {
-              setRemoving(true);
-              void remove({ token })
-                .catch(() => {})
-                .finally(() => setRemoving(false));
-            }}
-          >
-            Remove Canvas
-          </Button>
-        </div>
+          <div className="flex items-center gap-2">
+            <p className="min-w-0 flex-1 type-caption text-text-3">Read only. Nothing is ever sent to Canvas.</p>
+            <Button size="sm" variant="ghost" onClick={() => setConfirming(true)} className="-me-2 shrink-0">
+              Remove Canvas
+            </Button>
+          </div>
+        </>
       )}
     </div>
   );

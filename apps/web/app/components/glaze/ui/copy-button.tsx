@@ -45,6 +45,8 @@ type CopyButtonProps = Omit<ButtonProps, 'onClick' | 'onCopy' | 'children' | 'pe
   label?: string;
   /** Shows "Copy", then "Copied", as text after the glyph. */
   showLabel?: boolean;
+  /** The visible label at rest, when "Copy" alone would not say what is copied: "Copy link". */
+  copyText?: string;
   /** How long the confirmation stays, in ms. */
   timeout?: number;
   onCopy?: (value: string) => void;
@@ -52,7 +54,7 @@ type CopyButtonProps = Omit<ButtonProps, 'onClick' | 'onCopy' | 'children' | 'pe
   forceState?: Exclude<CopyState, 'idle'>;
 };
 
-function CopyButton({value, label, showLabel = false, timeout = 1600, onCopy, forceState, variant = 'ghost', size, className, ...props}: CopyButtonProps) {
+function CopyButton({value, label, showLabel = false, copyText = 'Copy', timeout = 1600, onCopy, forceState, variant = 'ghost', size, className, ...props}: CopyButtonProps) {
   const [live, setState] = useState<CopyState>('idle');
   const [announcement, setAnnouncement] = useState('');
   const timer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
@@ -108,7 +110,7 @@ function CopyButton({value, label, showLabel = false, timeout = 1600, onCopy, fo
     >
       <Icon icon={glyph} size={iconSize}/>
       {showLabel && <span aria-hidden className="grid [grid-template-areas:'stack']">
-        <span className={cn('[grid-area:stack]', state !== 'idle' && state !== 'fetching' && 'invisible')}>Copy</span>
+        <span className={cn('[grid-area:stack]', state !== 'idle' && state !== 'fetching' && 'invisible')}>{copyText}</span>
         <span className={cn('[grid-area:stack]', state !== 'copied' && 'invisible')}>Copied</span>
         <span className={cn('[grid-area:stack]', state !== 'failed' && 'invisible')}>Failed</span>
       </span>}

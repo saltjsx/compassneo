@@ -213,6 +213,7 @@ export function FileRow({
   file,
   source,
   mime,
+  wrap,
   className,
 }: {
   name: string;
@@ -228,8 +229,11 @@ export function FileRow({
   lead?: React.ReactNode;
   /** Before the button (where it came from). */
   aside?: React.ReactNode;
+  /** The name takes two lines before it is cut (a grid's narrow columns, where long names share their start). */
+  wrap?: boolean;
   className?: string;
 }) {
+  const nameCut = wrap ? "line-clamp-2 [overflow-wrap:anywhere]" : "truncate";
   return (
     <div className={cn("neo-file relative flex min-w-0 items-center gap-3", className)}>
       {lead ?? (external ? <Favicon url={href} /> : <KindGlyph kind={kind} />)}
@@ -240,12 +244,12 @@ export function FileRow({
             target="_blank"
             rel="noreferrer noopener"
             onClick={opens({ href, name: file ?? name, source, mime })}
-            className="neo-file-link block truncate type-label text-text-1"
+            className={cn("neo-file-link type-label text-text-1", wrap ? nameCut : "block truncate")}
           >
             {name}
           </a>
         ) : (
-          <p className="truncate type-label text-text-2">{name}</p>
+          <p className={cn("type-label text-text-2", nameCut)}>{name}</p>
         )}
         <p className="truncate type-caption text-text-3">{meta ?? kind.label}</p>
       </div>

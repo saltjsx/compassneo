@@ -154,20 +154,16 @@ function TodoRow({
   onOpenClass: (code: string, el: HTMLElement, tab?: ClassTab) => void;
 }) {
   const due = dueOf(item, zone, today);
-  const notes = [
-    item.className,
-    item.important && "Important",
-    item.offline && "Not handed in online",
-    !item.overdue && lastLessonText(item.lastLesson, today, zone),
-  ]
-    .filter(Boolean)
-    .join(" · ");
+  const notes = [item.className, item.important && "Important", item.offline && "Not handed in online"].filter(Boolean).join(" · ");
+  // On a line of its own: joined to the notes it was cut off at phone width.
+  const last = !item.overdue && lastLessonText(item.lastLesson, today, zone);
   const body = (
     <>
       <Icon icon={subjectIcon(item.className, item.className, item.code ?? "")} size={16} className={item.hue != null ? "neo-glyph" : "text-text-3"} />
       <span className="flex min-w-0 flex-1 flex-col">
         <span className="truncate type-label text-text-1">{item.name}</span>
         <span className="truncate type-caption text-text-3">{notes}</span>
+        {last && <span className="truncate type-caption text-text-3">{last}</span>}
       </span>
       <span
         className={cn(

@@ -77,22 +77,25 @@ export function minutes(ms: number) {
 export type LastLesson = { kind: "lesson"; day: string; start: string; period: number | null } | { kind: "none" };
 
 /**
- * "Last lesson Thursday, P3", "Last lesson today, 1:20", "No lessons left before it's due". Short, for a row's caption;
+ * "Last lesson Thursday, P3", "Last lesson today, 1:20", "No lessons left" (before it is due). Short, for a row's caption;
  * null when the server does not know (the timetable is not kept that far ahead).
  */
 export function lastLessonText(l: LastLesson | null | undefined, today: string, zone: string) {
   if (!l) return null;
-  if (l.kind === "none") return "No lessons left before it's due";
+  if (l.kind === "none") return "No lessons left";
   const n = daysApart(today, l.day);
   const day = n === 0 || n === 1 ? dayName(l.day, today).toLowerCase() : dayName(l.day, today);
   return `Last lesson ${day}, ${l.period != null ? `P${l.period}` : clock(l.start, zone)}`;
 }
 
-/** "Thursday 5 November, period 3 (9:50)": the same, in full, for the work's own page. */
+/**
+ * "Last lesson: Thu 5 Nov, P3 (9:50)", "Last lesson: today, 1:20": the same, with its date and clock time, for the
+ * work's own page. Short enough for one line at phone width, and allowed to wrap where it is not.
+ */
 export function lastLessonLong(l: LastLesson | null | undefined, today: string, zone: string) {
   if (!l) return null;
   if (l.kind === "none") return "No lessons of this class left before it's due";
   const n = daysApart(today, l.day);
-  const day = n === 0 ? "Today" : n === 1 ? "Tomorrow" : longDay(l.day);
-  return `Last lesson before it's due: ${day}, ${l.period != null ? `period ${l.period} (${clock(l.start, zone)})` : clock(l.start, zone)}`;
+  const day = n === 0 ? "today" : n === 1 ? "tomorrow" : short.format(noon(l.day)).replace(",", "");
+  return `Last lesson: ${day}, ${l.period != null ? `P${l.period} (${clock(l.start, zone)})` : clock(l.start, zone)}`;
 }
