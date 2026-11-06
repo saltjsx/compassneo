@@ -6,7 +6,8 @@ import { flushSync } from "react-dom";
  * the page dissolves, old and new at once, with nothing sliding in.
  *
  * The kind goes on <html> as data-morph while the morph plays, so brand.css can tell a step change (named parts glide,
- * the step's box is wiped from the top) from a change of route (the new screen is wiped over the old one, whole).
+ * the step's box is wiped from the top) from a change of route (the new screen is wiped over the old one, whole) from a
+ * change of theme (the new palette washes across the old: theme.ts drives it, through onReady).
  *
  * Without the API, or with reduced motion, the update just happens.
  */
@@ -20,11 +21,14 @@ export const canMorph = () =>
   typeof (document as WithTransitions).startViewTransition === "function" &&
   !matchMedia("(prefers-reduced-motion: reduce)").matches;
 
-async function run(kind: Kind, update: () => unknown): Promise<void> {
+async function run(kind: Kind, update: () => unknown, onReady?: () => void): Promise<void> {
   const root = document.documentElement;
   root.dataset.morph = kind;
   try {
-    await (document as WithTransitions).startViewTransition!(update).finished;
+    const t = (document as WithTransitions).startViewTransition!(update);
+    // Both pictures are taken: an animation of the transition's own (a wipe) can start.
+    if (onReady) void t.ready.then(onReady, () => {});
+    await t.finished;
   } catch {
     // A morph that is skipped (another one started) still applied its update.
   } finally {
@@ -33,13 +37,13 @@ async function run(kind: Kind, update: () => unknown): Promise<void> {
   }
 }
 
-/** A change on this screen: a new step, an error appearing. */
-export function morph(update: () => void, kind: Kind = "step"): Promise<void> {
+/** A change on this screen: a new step, an error appearing, a new theme. onReady runs once both pictures are taken. */
+export function morph(update: () => void, kind: Kind = "step", onReady?: () => void): Promise<void> {
   if (!canMorph()) {
     update();
     return Promise.resolve();
   }
-  return run(kind, () => flushSync(update));
+  return run(kind, () => flushSync(update), onReady);
 }
 
 /** Resolves once a route root with data-route="<name>" is in the DOM, or after a second and a half. */

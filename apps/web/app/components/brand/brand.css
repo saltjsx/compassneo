@@ -263,9 +263,20 @@ html[data-morph="route"]::view-transition-new(root) {
 }
 html[data-morph="route"]::view-transition-group(neo-mark) { animation-duration: var(--dur-open); z-index: 1; }
 
+/* A change of theme (chooseTheme, lib/neo/theme.ts): the new palette washes across the old one from the top-left
+   corner, a circle growing until it covers the screen. The old picture holds still beneath; the new one is revealed by
+   the clip theme.ts animates on it. Nothing is named, so the whole screen, the mark included, goes over as one. */
+html[data-morph="theme"]::view-transition-old(root),
+html[data-morph="theme"]::view-transition-new(root) {
+  animation: none;
+  mix-blend-mode: normal;
+}
+html[data-morph="theme"]::view-transition-old(root) { z-index: 1; }
+html[data-morph="theme"]::view-transition-new(root) { z-index: 2; }
+
 /* The parts that carry across. Each name sits on one element at a time. The mark carries across screens too; the rest
    only across the steps of one screen. */
-html[data-morph] .neo-vt-mark { view-transition-name: neo-mark; }
+html[data-morph]:not([data-morph="theme"]) .neo-vt-mark { view-transition-name: neo-mark; }
 html[data-morph="step"] .neo-vt-word { view-transition-name: neo-word; }
 html[data-morph="step"] .neo-vt-tag { view-transition-name: neo-tag; }
 html[data-morph="step"] .neo-vt-step { view-transition-name: neo-step; }

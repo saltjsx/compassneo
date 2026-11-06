@@ -455,13 +455,15 @@ already shows today's classes.
 
 ## Design
 
-Glaze from design.how, retuned in `apps/web/app/components/glaze/tokens.css`: Glaze's neutral surfaces and ink,
-Neo blue as the only accent (primary glass, focus, a focused field, small glaze), Outfit for the wordmark and login titles,
-rounder shells. Light, dark (default) and auto themes, chosen in the profile card or on the sign-in screen
-(`lib/neo/theme.ts`, applied before first paint). The brand layer (`apps/web/app/components/brand/`) holds the logo
-components, the compass motion and the view-transition morphs (`apps/web/app/lib/neo/morph.ts`); the timetable's pieces
-are in `apps/web/app/features/timetable/timetable.css`. Follow `.claude/skills/glaze/SKILL.md` for UI work and run
-`bun run lint` (Glaze's lint) before shipping a screen.
+Glaze from design.how, retuned in `apps/web/app/components/glaze/tokens.css`: Glaze's neutral surfaces and ink, Neo blue
+as the only accent (primary glass, focus, a focused field, small glaze), Outfit for the wordmark and login titles,
+rounder shells. Light, dark (default) and auto themes, chosen in settings or on the sign-in screen (`lib/neo/theme.ts`,
+applied before first paint). A change of theme, chosen or the device's, washes across the screen from the top-left
+corner: a view transition holds the old picture still while a circle growing over the new one reveals it
+(`data-morph="theme"` in `brand.css`); with reduced motion it switches at once. The brand layer
+(`apps/web/app/components/brand/`) holds the logo components, the compass motion and the view-transition morphs
+(`apps/web/app/lib/neo/morph.ts`); the timetable's pieces are in `apps/web/app/features/timetable/timetable.css`. Follow
+`.claude/skills/glaze/SKILL.md` for UI work and run `bun run lint` (Glaze's lint) before shipping a screen.
 
 Motion runs on springs: `motion` (`lib/neo/motion.ts`) in React, and `--ease-spring` (a `linear()` spring) for view
 transitions. The class panel floats in from the right while the day springs aside on the same spring (from 760px wide;

@@ -3,7 +3,7 @@ import { Dark, Icon, Light } from "@/components/glaze/icon";
 import { Button } from "@/components/glaze/ui/button";
 import { chooseTheme, themeChoice, type ThemeChoice } from "@/lib/neo/theme";
 
-/** Light, dark, or the device's: the whole screen cross-fades into the one chosen. */
+/** Light, dark, or the device's: the whole screen washes into the one chosen, from the corner. */
 export function ThemeSwitch({ className }: { className?: string }) {
   const choice = themeChoice.use();
   return (
