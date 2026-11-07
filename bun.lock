@@ -10,6 +10,7 @@
       "dependencies": {
         "@compassneo/backend": "workspace:*",
         "@compassneo/brand": "workspace:*",
+        "@compassneo/canvas": "workspace:*",
         "@compassneo/compass": "workspace:*",
         "@expo/ui": "~58.0.27",
         "@react-native-async-storage/async-storage": "2.2.0",

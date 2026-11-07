@@ -53,6 +53,8 @@ export function Screen({
       contentInsetAdjustmentBehavior={seeThroughBar ? "automatic" : "never"}
       scrollEnabled={scroll}
       keyboardShouldPersistTaps="handled"
+      // A field low on the page (Canvas's token) scrolls up above the keyboard on iOS; Android resizes the window.
+      automaticallyAdjustKeyboardInsets
       refreshControl={onRefresh ? <RefreshControl refreshing={!!refreshing} onRefresh={onRefresh} tintColor={c.text2} colors={[c.neo]} /> : undefined}
     >
       {children}

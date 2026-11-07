@@ -13,7 +13,6 @@ import { Button } from "@/components/ui/button";
 import { Icon } from "@/components/ui/glass";
 import { Empty, Skeleton } from "@/components/ui/notice";
 import { Text } from "@/components/ui/text";
-import { openWeb } from "@/features/me/web";
 import { SyncGauge } from "@/features/sync/sync-gauge";
 import { RecentMarks } from "./recent-marks";
 import { SubjectRow } from "./subject-row";
@@ -81,15 +80,15 @@ function Body({
   if (data == null) return <GradesSkeleton />;
   switch (data.status) {
     case "none":
-      // No Connect (not a WA public school) and no Canvas added; Canvas is added on the web for now.
+      // No Connect (not a WA public school) and no Canvas added: Canvas is added in Settings, its form open.
       return (
         <View style={{ alignItems: "center" }}>
           <Empty title="No grades at this school" icon={<Icon ios="graduationcap.fill" android="school" size={30} color={c.text3} />}>
-            Grades come from Connect, which only WA public schools have. If your school uses Canvas, add it on the web and its
+            Grades come from Connect, which only WA public schools have. If your school uses Canvas, add it and its
             grades show up here.
           </Empty>
-          <Button variant="secondary" onPress={() => openWeb(c)}>
-            Add Canvas on the web
+          <Button variant="secondary" onPress={() => router.push({ pathname: "/settings", params: { add: "canvas" } })}>
+            Add Canvas
           </Button>
         </View>
       );

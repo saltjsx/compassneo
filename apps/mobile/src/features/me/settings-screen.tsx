@@ -1,20 +1,21 @@
 import Constants from "expo-constants";
-import { themePref, useTheme, type ThemePref } from "@/theme/theme";
+import { useLocalSearchParams } from "expo-router";
+import { themePref, type ThemePref } from "@/theme/theme";
 import { space } from "@/theme/tokens";
 import { useSession } from "@/lib/session";
 import { useStored } from "@/lib/store";
-import { Button } from "@/components/ui/button";
 import { Screen } from "@/components/ui/screen";
 import { Card } from "@/components/ui/card";
-import { Icon, Segmented } from "@/components/ui/glass";
+import { Segmented } from "@/components/ui/glass";
 import { Text } from "@/components/ui/text";
 import { Quiet } from "@/components/ui/quiet";
+import { AiCard } from "./ai-card";
 import { CalendarCard } from "./calendar-card";
+import { CanvasCard } from "./canvas-card";
 import { GuestCard } from "./guest-card";
 import { SettingHead } from "./head";
 import { NotificationsCard } from "./notifications-card";
 import { ProfileCard } from "./profile-card";
-import { openWeb } from "./web";
 
 const THEMES: { value: ThemePref; label: string }[] = [
   { value: "light", label: "Light" },
@@ -25,18 +26,23 @@ const THEMES: { value: ThemePref; label: string }[] = [
 /**
  * Settings, a page of its own, opened from the photo on home (the header says "Settings"): the web's settings page
  * (apps/web/app/routes/settings.tsx) for a phone, one card each. Who is signed in, where and the last sync, with Sync
- * now and Sign out; guest mode, lending the phone to a friend (features/guest); the theme; the calendar feed; the way to what is still web-only (Canvas, AI access); and the app's
- * version at the foot. The cards are content, drawn the web's way; everything in them you press is Liquid Glass.
+ * now and Sign out; guest mode, lending the phone to a friend (features/guest); the theme; notifications; Canvas;
+ * the calendar feed; AI access; and the app's version at the foot. ?add=canvas (Grades, at a school without Connect)
+ * puts Canvas first, its form open. The cards are content, drawn the web's way; everything in them you press is
+ * Liquid Glass.
  */
 export function SettingsScreen() {
-  const c = useTheme();
   const { me, token } = useSession();
+  const { add } = useLocalSearchParams<{ add?: string }>();
+  const asked = add === "canvas";
   const theme = useStored(themePref);
   // Signing out clears the session a frame before the guard swaps this page for sign-in.
   if (!me || !token) return <Screen>{null}</Screen>;
+  const canvas = <CanvasCard token={token} asked={asked} />;
 
   return (
     <Screen contentStyle={{ gap: space[3] }}>
+      {asked && canvas}
       <ProfileCard me={me} token={token} />
       <GuestCard />
 
@@ -49,20 +55,9 @@ export function SettingsScreen() {
       <Quiet name="Notifications">
         <NotificationsCard token={token} />
       </Quiet>
+      {!asked && canvas}
       <CalendarCard token={token} />
-
-      <Card panelStyle={{ gap: space[3] }}>
-        <SettingHead ios="safari.fill" android="public" title="More on the web" caption="Canvas and AI access are at compassneo.app for now." />
-        <Button
-          size="sm"
-          variant="secondary"
-          icon={<Icon ios="arrow.up.forward" android="arrow_outward" size={12} color={c.text1} weight="semibold" />}
-          onPress={() => openWeb(c)}
-          style={{ alignSelf: "flex-start" }}
-        >
-          Open compassneo.app
-        </Button>
-      </Card>
+      <AiCard token={token} />
 
       <Text variant="caption" tone="3" style={{ textAlign: "center", marginTop: space[2] }}>
         Compass Neo {Constants.expoConfig?.version ?? ""}
