@@ -183,8 +183,12 @@ button.neo-card:focus-visible { outline: var(--focus-width) solid var(--focus); 
 }
 
 /* Scrollbars never move anything: the page always keeps its scrollbar's room (also while a class is open and the page
-   is held still), and an overlay that scrolls keeps room on both edges, so what it centres stays centred. */
-html { scrollbar-gutter: stable; }
+   is held still), and an overlay that scrolls keeps room on both edges, so what it centres stays centred.
+   The page's bar is always there, not only its room: on a Mac set to show scroll bars only when scrolling, Chrome and
+   Safari reserve no gutter (they expect an overlay bar), yet Glaze's drawn bar (base.css) takes 10px whenever the page
+   gets long enough to scroll, so opening a fold nudged everything sideways. With nothing to scroll the bar is empty and
+   its track clear, so the room it keeps looks the same as the gutter's. */
+html { scrollbar-gutter: stable; overflow-y: scroll; }
 .neo-scroll-stable { scrollbar-gutter: stable both-edges; }
 
 /* ---------- the list of classes under the day (features/home/class-list.tsx) ---------- */
