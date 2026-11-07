@@ -18,8 +18,13 @@ const backend = resolve(app, "../../packages/backend");
 const env = { ...process.env, EXPO_PUBLIC_CONVEX_URL: PROD };
 const npx = process.platform === "win32" ? "npx.cmd" : "npx";
 
+// On Windows npx is a .cmd, so it runs through cmd.exe, which joins the args with bare spaces: quote any arg with a
+// space or a quote in it (a message, the release's JSON), escaping its quotes the way node reads them back.
+const win = process.platform === "win32";
+const quote = a => (win && /[\s"]/.test(a) ? `"${a.replace(/(\\*)"/g, '$1$1\\"').replace(/(\\+)$/, "$1$1")}"` : a);
+
 const run = (args, cwd, capture = false) =>
-  execFileSync(npx, args, { cwd, env, stdio: capture ? ["inherit", "pipe", "inherit"] : "inherit", encoding: "utf8", shell: process.platform === "win32" });
+  execFileSync(npx, args.map(quote), { cwd, env, stdio: capture ? ["inherit", "pipe", "inherit"] : "inherit", encoding: "utf8", shell: win });
 
 const [what, note] = process.argv.slice(2);
 
